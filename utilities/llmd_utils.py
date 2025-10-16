@@ -8,11 +8,14 @@ from string import Template
 from typing import Any, Dict, Generator, Optional
 
 from kubernetes.dynamic import DynamicClient
+from kubernetes.dynamic.exceptions import ResourceNotFoundError
 from ocp_resources.gateway import Gateway
 from ocp_resources.llm_inference_service import LLMInferenceService
+from ocp_resources.pod import Pod
+from ocp_resources.service_account import ServiceAccount
 from pyhelper_utils.shell import run_command
 from simple_logger.logger import get_logger
-from timeout_sampler import retry, TimeoutWatch
+from timeout_sampler import retry, TimeoutSampler, TimeoutWatch
 
 from utilities.certificates_utils import get_ca_bundle
 from utilities.constants import HTTPRequest, Timeout
@@ -723,3 +726,472 @@ def _validate_authorized_response(
                 )
     else:
         raise InferenceResponseError(f"Inference response output not found in response. Response: {res}")
+
+
+# Multi-node utilities
+
+
+def get_leader_worker_set(
+    client: DynamicClient,
+    name: str,
+    namespace: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get LeaderWorkerSet resource for an LLMInferenceService.
+
+    Args:
+        client: Kubernetes dynamic client
+        name: LeaderWorkerSet name
+        namespace: Namespace name
+
+    Returns:
+        Dict containing LWS resource or None if not found
+    """
+    try:
+        lws_resource = client.resources.get(
+            api_version="leaderworkerset.x-k8s.io/v1",
+            kind="LeaderWorkerSet"
+        )
+        lws = lws_resource.get(name=name, namespace=namespace)
+        return lws.to_dict()
+    except ResourceNotFoundError:
+        LOGGER.debug(f"LeaderWorkerSet {name} not found in namespace {namespace}")
+        return None
+    except Exception as e:
+        LOGGER.error(f"Error getting LeaderWorkerSet {name}: {e}")
+        return None
+
+
+def get_http_route(
+    client: DynamicClient,
+    name: str,
+    namespace: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get HTTPRoute resource.
+
+    Args:
+        client: Kubernetes dynamic client
+        name: HTTPRoute name
+        namespace: Namespace name
+
+    Returns:
+        Dict containing HTTPRoute resource or None if not found
+    """
+    try:
+        route_resource = client.resources.get(
+            api_version="gateway.networking.k8s.io/v1",
+            kind="HTTPRoute"
+        )
+        route = route_resource.get(name=name, namespace=namespace)
+        return route.to_dict()
+    except ResourceNotFoundError:
+        LOGGER.debug(f"HTTPRoute {name} not found in namespace {namespace}")
+        return None
+    except Exception as e:
+        LOGGER.error(f"Error getting HTTPRoute {name}: {e}")
+        return None
+
+
+def get_inference_pool(
+    client: DynamicClient,
+    name: str,
+    namespace: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get InferencePool resource.
+
+    Args:
+        client: Kubernetes dynamic client
+        name: InferencePool name
+        namespace: Namespace name
+
+    Returns:
+        Dict containing InferencePool resource or None if not found
+    """
+    try:
+        pool_resource = client.resources.get(
+            api_version="serving.kserve.io/v1alpha1",
+            kind="InferencePool"
+        )
+        pool = pool_resource.get(name=name, namespace=namespace)
+        return pool.to_dict()
+    except ResourceNotFoundError:
+        LOGGER.debug(f"InferencePool {name} not found in namespace {namespace}")
+        return None
+    except Exception as e:
+        LOGGER.error(f"Error getting InferencePool {name}: {e}")
+        return None
+
+
+def verify_lws_configuration(
+    lws: Dict[str, Any],
+    expected_replicas: int,
+    expected_size: int,
+    has_leader_template: bool = False,
+    has_worker_template: bool = True,
+) -> bool:
+    """
+    Verify LeaderWorkerSet configuration matches expectations.
+
+    Args:
+        lws: LeaderWorkerSet dictionary
+        expected_replicas: Expected number of replicas
+        expected_size: Expected size (workers per replica group)
+        has_leader_template: Whether leader template should exist
+        has_worker_template: Whether worker template should exist
+
+    Returns:
+        bool: True if configuration matches, False otherwise
+    """
+    try:
+        spec = lws.get("spec", {})
+        
+        if spec.get("replicas") != expected_replicas:
+            LOGGER.error(
+                f"LWS replicas mismatch: expected {expected_replicas}, "
+                f"got {spec.get('replicas')}"
+            )
+            return False
+        
+        leader_worker_template = spec.get("leaderWorkerTemplate", {})
+        size = leader_worker_template.get("size")
+        
+        if size != expected_size:
+            LOGGER.error(
+                f"LWS size mismatch: expected {expected_size}, got {size}"
+            )
+            return False
+        
+        has_leader = "leaderTemplate" in leader_worker_template
+        has_worker = "workerTemplate" in leader_worker_template
+        
+        if has_leader_template and not has_leader:
+            LOGGER.error("Expected leader template but not found")
+            return False
+        
+        if has_worker_template and not has_worker:
+            LOGGER.error("Expected worker template but not found")
+            return False
+        
+        LOGGER.info(f"LWS configuration verified: replicas={expected_replicas}, size={expected_size}")
+        return True
+        
+    except Exception as e:
+        LOGGER.error(f"Error verifying LWS configuration: {e}")
+        return False
+
+
+def get_lws_pods(
+    client: DynamicClient,
+    lws_name: str,
+    namespace: str,
+    role: Optional[str] = None,
+) -> list[Pod]:
+    """
+    Get pods belonging to a LeaderWorkerSet.
+
+    Args:
+        client: Kubernetes dynamic client
+        lws_name: LeaderWorkerSet name
+        namespace: Namespace
+        role: Optional role filter (e.g., 'both', 'prefill', 'decode')
+
+    Returns:
+        List of Pod objects
+    """
+    label_selector = f"leaderworkerset.sigs.k8s.io/name={lws_name}"
+    if role:
+        label_selector += f",llm-d.ai/role={role}"
+    
+    pods = list(Pod.get(
+        dyn_client=client,
+        namespace=namespace,
+        label_selector=label_selector,
+    ))
+    
+    LOGGER.debug(f"Found {len(pods)} pods for LWS {lws_name} with role={role}")
+    return pods
+
+
+def verify_pod_labels(
+    pods: list[Pod],
+    expected_labels: Dict[str, str],
+) -> bool:
+    """
+    Verify that pods have expected labels.
+
+    Args:
+        pods: List of Pod objects
+        expected_labels: Dict of expected labels
+
+    Returns:
+        bool: True if all pods have expected labels
+    """
+    for pod in pods:
+        pod_labels = pod.instance.metadata.get("labels", {})
+        for key, value in expected_labels.items():
+            if pod_labels.get(key) != value:
+                LOGGER.error(
+                    f"Pod {pod.name} missing or incorrect label: "
+                    f"{key}={value}, got {pod_labels.get(key)}"
+                )
+                return False
+    
+    LOGGER.info(f"All {len(pods)} pods have expected labels")
+    return True
+
+
+def verify_pod_containers(
+    pods: list[Pod],
+    expected_container_names: list[str],
+) -> bool:
+    """
+    Verify that pods have expected containers.
+
+    Args:
+        pods: List of Pod objects
+        expected_container_names: List of expected container names
+
+    Returns:
+        bool: True if all pods have expected containers
+    """
+    for pod in pods:
+        spec = pod.instance.spec
+        containers = spec.get("containers", [])
+        container_names = [c.get("name") for c in containers]
+        
+        for expected_name in expected_container_names:
+            if expected_name not in container_names:
+                LOGGER.error(
+                    f"Pod {pod.name} missing container: {expected_name}, "
+                    f"has {container_names}"
+                )
+                return False
+    
+    LOGGER.info(f"All {len(pods)} pods have expected containers")
+    return True
+
+
+def verify_service_account_exists(
+    client: DynamicClient,
+    name: str,
+    namespace: str,
+    expected_labels: Optional[Dict[str, str]] = None,
+) -> bool:
+    """
+    Verify that a ServiceAccount exists with expected labels.
+
+    Args:
+        client: Kubernetes dynamic client
+        name: ServiceAccount name
+        namespace: Namespace
+        expected_labels: Optional dict of expected labels
+
+    Returns:
+        bool: True if ServiceAccount exists and matches expectations
+    """
+    try:
+        sa = ServiceAccount(
+            client=client,
+            name=name,
+            namespace=namespace,
+        )
+        
+        if not sa.exists:
+            LOGGER.error(f"ServiceAccount {name} does not exist")
+            return False
+        
+        if expected_labels:
+            sa_labels = sa.instance.metadata.get("labels", {})
+            for key, value in expected_labels.items():
+                if sa_labels.get(key) != value:
+                    LOGGER.error(
+                        f"ServiceAccount {name} missing or incorrect label: "
+                        f"{key}={value}, got {sa_labels.get(key)}"
+                    )
+                    return False
+        
+        LOGGER.info(f"ServiceAccount {name} verified")
+        return True
+        
+    except Exception as e:
+        LOGGER.error(f"Error verifying ServiceAccount {name}: {e}")
+        return False
+
+
+def verify_llmisvc_conditions(
+    llm_service: LLMInferenceService,
+    expected_conditions: Dict[str, str],
+    timeout: int = 300,
+) -> bool:
+    """
+    Verify LLMInferenceService has expected status conditions.
+
+    Args:
+        llm_service: LLMInferenceService resource
+        expected_conditions: Dict of condition_type -> expected_status
+        timeout: Timeout in seconds
+
+    Returns:
+        bool: True if all expected conditions are met
+    """
+    for condition_type, expected_status in expected_conditions.items():
+        try:
+            LOGGER.info(f"Waiting for condition {condition_type}={expected_status}")
+            llm_service.wait_for_condition(
+                condition=condition_type,
+                status=expected_status,
+                timeout=timeout,
+            )
+            LOGGER.info(f"Condition {condition_type}={expected_status} met")
+        except Exception as e:
+            LOGGER.error(
+                f"Failed to meet condition {condition_type}={expected_status}: {e}"
+            )
+            return False
+    
+    return True
+
+
+def get_llmisvc_status_condition(
+    llm_service: LLMInferenceService,
+    condition_type: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get specific status condition from LLMInferenceService.
+
+    Args:
+        llm_service: LLMInferenceService resource
+        condition_type: Type of condition to get
+
+    Returns:
+        Dict containing condition or None if not found
+    """
+    conditions = llm_service.instance.status.get("conditions", [])
+    for condition in conditions:
+        if condition.get("type") == condition_type:
+            return condition
+    return None
+
+
+def verify_prefill_decode_setup(
+    client: DynamicClient,
+    llm_service: LLMInferenceService,
+    expected_prefill_replicas: int,
+    expected_decode_replicas: int,
+    expected_prefill_size: int,
+    expected_decode_size: int,
+) -> bool:
+    """
+    Verify prefill/decode disaggregated setup.
+
+    Args:
+        client: Kubernetes dynamic client
+        llm_service: LLMInferenceService resource
+        expected_prefill_replicas: Expected prefill replicas
+        expected_decode_replicas: Expected decode replicas
+        expected_prefill_size: Expected prefill size
+        expected_decode_size: Expected decode size
+
+    Returns:
+        bool: True if setup is correct
+    """
+    base_name = f"{llm_service.name}-kserve-mn"
+    
+    decode_lws = get_leader_worker_set(
+        client=client,
+        name=base_name,
+        namespace=llm_service.namespace,
+    )
+    
+    if not decode_lws:
+        LOGGER.error(f"Decode LWS {base_name} not found")
+        return False
+    
+    prefill_lws = get_leader_worker_set(
+        client=client,
+        name=f"{base_name}-prefill",
+        namespace=llm_service.namespace,
+    )
+    
+    if not prefill_lws:
+        LOGGER.error(f"Prefill LWS {base_name}-prefill not found")
+        return False
+    
+    decode_ok = verify_lws_configuration(
+        lws=decode_lws,
+        expected_replicas=expected_decode_replicas,
+        expected_size=expected_decode_size,
+    )
+    
+    prefill_ok = verify_lws_configuration(
+        lws=prefill_lws,
+        expected_replicas=expected_prefill_replicas,
+        expected_size=expected_prefill_size,
+    )
+    
+    if not (decode_ok and prefill_ok):
+        return False
+    
+    decode_pods = get_lws_pods(
+        client=client,
+        lws_name=base_name,
+        namespace=llm_service.namespace,
+        role="decode",
+    )
+    
+    prefill_pods = get_lws_pods(
+        client=client,
+        lws_name=f"{base_name}-prefill",
+        namespace=llm_service.namespace,
+        role="prefill",
+    )
+    
+    if not decode_pods:
+        LOGGER.error("No decode pods found")
+        return False
+    
+    if not prefill_pods:
+        LOGGER.error("No prefill pods found")
+        return False
+    
+    LOGGER.info(
+        f"Prefill/decode setup verified: "
+        f"decode_pods={len(decode_pods)}, prefill_pods={len(prefill_pods)}"
+    )
+    return True
+
+
+def wait_for_lws_creation(
+    client: DynamicClient,
+    lws_name: str,
+    namespace: str,
+    timeout: int = 300,
+) -> bool:
+    """
+    Wait for LeaderWorkerSet to be created.
+
+    Args:
+        client: Kubernetes dynamic client
+        lws_name: LeaderWorkerSet name
+        namespace: Namespace
+        timeout: Timeout in seconds
+
+    Returns:
+        bool: True if LWS exists within timeout
+    """
+    for sample in TimeoutSampler(
+        wait_timeout=timeout,
+        sleep=5,
+        func=get_leader_worker_set,
+        client=client,
+        name=lws_name,
+        namespace=namespace,
+    ):
+        if sample is not None:
+            LOGGER.info(f"LeaderWorkerSet {lws_name} created")
+            return True
+    
+    LOGGER.error(f"LeaderWorkerSet {lws_name} not created within {timeout}s")
+    return False
