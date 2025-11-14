@@ -1,0 +1,21 @@
+name: DCO Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dco-check:
+    name: Developer Certificate of Origin Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check DCO
+        uses: tim-actions/dco@v1.1
+        with:
+          # Require all commits in the PR to be signed off
+          require_dco: true
+          # Optionally allow certain users to bypass (typically bots)
+          # allowlist: |
+          #   dependabot[bot]
+          #   renovate[bot]
+
