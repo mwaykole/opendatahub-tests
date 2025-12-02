@@ -1,8 +1,28 @@
 from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import ResourceNotFoundError
 from ocp_resources.inference_service import InferenceService
-from utilities.constants import Timeout
+from utilities.constants import AcceleratorType, Labels, Timeout
 from utilities.infra import get_model_route
+
+
+ACCELERATOR_IDENTIFIER: dict[str, str] = {
+    AcceleratorType.NVIDIA: Labels.Nvidia.NVIDIA_COM_GPU,
+    AcceleratorType.AMD: Labels.ROCm.ROCM_GPU,
+}
+
+
+def get_gpu_identifier(accelerator_type: str | None) -> str:
+    """Get the GPU resource identifier based on accelerator type.
+
+    Args:
+        accelerator_type: The accelerator type (nvidia, amd, etc.) or None for default.
+
+    Returns:
+        The GPU resource identifier string (e.g., 'nvidia.com/gpu', 'amd.com/gpu').
+    """
+    if accelerator_type is None:
+        return Labels.Nvidia.NVIDIA_COM_GPU
+    return ACCELERATOR_IDENTIFIER.get(accelerator_type.lower(), Labels.Nvidia.NVIDIA_COM_GPU)
 
 
 def assert_ingress_status_changed(client: DynamicClient, inference_service: InferenceService) -> None:
