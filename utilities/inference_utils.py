@@ -1,6 +1,7 @@
 import json
 import re
 import shlex
+import warnings
 from contextlib import contextmanager
 from http import HTTPStatus
 from json import JSONDecodeError
@@ -39,6 +40,20 @@ from utilities.constants import (
 )
 import portforward
 
+# NEW: Import refactored components for backward compatibility
+from utilities.isvc_builder import ISVCBuilder
+from utilities.isvc_config import (
+    ISVCBaseConfig,
+    StorageConfig,
+    ScalingConfig,
+    SecurityConfig,
+    DeploymentConfig,
+    ResourceConfig,
+    MultiNodeConfig,
+)
+from utilities.deployment_strategies import DeploymentModeFactory
+from utilities.inference_executor import InferenceExecutor
+
 LOGGER = get_logger(name=__name__)
 
 
@@ -58,6 +73,14 @@ class Inference:
         self.deployment_mode = self.get_deployment_type()
         if isinstance(self.inference_service, InferenceService):
             self.runtime = get_inference_serving_runtime(isvc=self.inference_service)
+
+        # NEW: Use deployment strategy pattern
+        try:
+            self.deployment_strategy = DeploymentModeFactory.create(self.deployment_mode)
+        except ValueError:
+            # Fallback to old behavior if deployment mode not recognized
+            self.deployment_strategy = None
+
         self.visibility_exposed = self.is_service_exposed()
 
     def get_deployment_type(self) -> str:
@@ -115,6 +138,12 @@ class Inference:
             bool: True if the service is exposed, False otherwise
 
         """
+        # NEW: Use deployment strategy if available
+        if self.deployment_strategy:
+            labels = self.inference_service.labels
+            return self.deployment_strategy.is_service_exposed(labels)
+
+        # OLD: Fallback to original logic for backward compatibility
         labels = self.inference_service.labels
 
         if self.deployment_mode == KServeDeploymentType.RAW_DEPLOYMENT:
@@ -586,7 +615,11 @@ def create_isvc(
     scheduler_name: str | None = None,
 ) -> Generator[InferenceService, Any, Any]:
     """
-    Create InferenceService object.
+    DEPRECATED: Use ISVCBuilder instead.
+
+    Create InferenceService object using builder pattern internally.
+    This wrapper is kept for backward compatibility.
+    Will be removed in future version.
 
     Args:
         client (DynamicClient): DynamicClient object
@@ -625,165 +658,92 @@ def create_isvc(
         InferenceService: InferenceService object
 
     """
-    if labels is None:
-        labels = {}
+    # Emit deprecation warning
+    warnings.warn(
+        "create_isvc() is deprecated. Use ISVCBuilder instead. "
+        "See utilities/isvc_builder.py for the new API.",
+        DeprecationWarning,
+        stacklevel=2
+    )
 
-    predictor_dict: dict[str, Any] = {
-        "model": {
-            "modelFormat": {"name": model_format},
-            "version": model_version,
-            "runtime": runtime,
-        },
-    }
-
-    if min_replicas is not None:
-        predictor_dict["minReplicas"] = min_replicas
-
-    if max_replicas is not None:
-        predictor_dict["maxReplicas"] = max_replicas
-
-    if model_version:
-        predictor_dict["model"]["modelFormat"]["version"] = model_version
-
-    if storage_uri or storage_path or storage_key:
-        _check_storage_arguments(storage_uri=storage_uri, storage_key=storage_key, storage_path=storage_path)
-    if storage_uri:
-        predictor_dict["model"]["storageUri"] = storage_uri
-    elif storage_key:
-        predictor_dict["model"]["storage"] = {"key": storage_key, "path": storage_path}
-    if model_service_account:
-        predictor_dict["serviceAccountName"] = model_service_account
-    if image_pull_secrets:
-        predictor_dict["imagePullSecrets"] = [{"name": name} for name in image_pull_secrets]
-
-    if min_replicas:
-        predictor_dict["minReplicas"] = min_replicas
-    if max_replicas:
-        predictor_dict["maxReplicas"] = max_replicas
-    if argument:
-        predictor_dict["model"]["args"] = argument
-    if resources:
-        predictor_dict["model"]["resources"] = resources
-    if volumes_mounts:
-        predictor_dict["model"]["volumeMounts"] = volumes_mounts
-    if volumes:
-        predictor_dict["volumes"] = volumes
-    if model_env_variables:
-        predictor_dict["model"]["env"] = model_env_variables
-    if auto_scaling:
-        predictor_dict["autoScaling"] = auto_scaling
-
-    _annotations: dict[str, str] = {}
-
-    if deployment_mode:
-        _annotations = {Annotations.KserveIo.DEPLOYMENT_MODE: deployment_mode}
-
-    if enable_auth:
-        # model mesh auth is set in ServingRuntime
-        if deployment_mode == KServeDeploymentType.SERVERLESS:
-            _annotations[Annotations.KserveAuth.SECURITY] = "true"
-        elif deployment_mode == KServeDeploymentType.RAW_DEPLOYMENT:
-            _annotations[Annotations.KserveAuth.SECURITY] = "true"
-
-    # default to True if deployment_mode is Serverless (default behavior of Serverless) if was not provided by the user
-    # model mesh external route is set in ServingRuntime
-    if external_route is None and deployment_mode == KServeDeploymentType.SERVERLESS:
-        external_route = True
-
-    if external_route and deployment_mode == KServeDeploymentType.RAW_DEPLOYMENT:
-        labels[Labels.Kserve.NETWORKING_KSERVE_IO] = Labels.Kserve.EXPOSED
-
-    if deployment_mode == KServeDeploymentType.SERVERLESS and external_route is False:
-        labels["networking.knative.dev/visibility"] = "cluster-local"
-
-    if autoscaler_mode:
-        _annotations["serving.kserve.io/autoscalerClass"] = autoscaler_mode
-
-    if stop_resume:
-        _annotations[Annotations.KserveIo.FORCE_STOP_RUNTIME] = str(stop_resume)
-
-    if multi_node_worker_spec is not None:
-        predictor_dict["workerSpec"] = multi_node_worker_spec
-
-    if scale_metric is not None:
-        predictor_dict["scaleMetric"] = scale_metric
-
-    if scale_target is not None:
-        predictor_dict["scaleTarget"] = scale_target
-
-    if protocol_version is not None:
-        predictor_dict["model"]["protocolVersion"] = protocol_version
-
-    if scheduler_name is not None:
-        predictor_dict["schedulerName"] = scheduler_name
-
-    with InferenceService(
+    # NEW: Use builder pattern internally
+    builder = ISVCBuilder(
         client=client,
-        name=name,
-        namespace=namespace,
-        annotations=_annotations,
-        predictor=predictor_dict,
-        label=labels,
-        teardown=teardown,
-    ) as inference_service:
-        timeout_watch = TimeoutWatch(timeout=timeout)
+        base_config=ISVCBaseConfig(
+            name=name,
+            namespace=namespace,
+            model_format=model_format,
+            runtime=runtime
+        )
+    )
 
-        # Skip waiting for pods if stop_resume is "True" since no pods should be created
-        if wait_for_predictor_pods and not stop_resume:
-            verify_no_failed_pods(
-                client=client,
-                isvc=inference_service,
-                runtime_name=runtime,
-                timeout=timeout_watch.remaining_time(),
-            )
-            wait_for_inference_deployment_replicas(
-                client=client,
-                isvc=inference_service,
-                runtime_name=runtime,
-                timeout=timeout_watch.remaining_time(),
-            )
+    # Map storage parameters
+    if storage_uri or storage_key or storage_path:
+        builder.with_storage(StorageConfig(
+            uri=storage_uri,
+            key=storage_key,
+            path=storage_path
+        ))
 
-        if wait and not stop_resume:
-            # Modelmesh 2nd server in the ns will fail to be Ready; isvc needs to be re-applied
-            if deployment_mode == KServeDeploymentType.MODEL_MESH:
-                for isvc in InferenceService.get(client=client, namespace=namespace):
-                    _runtime = get_inference_serving_runtime(isvc=isvc)
-                    isvc_annotations = isvc.instance.metadata.annotations
-                    if (
-                        _runtime.name != runtime
-                        and isvc_annotations
-                        and isvc_annotations.get(Annotations.KserveIo.DEPLOYMENT_MODE)
-                        == KServeDeploymentType.MODEL_MESH
-                    ):
-                        LOGGER.warning(
-                            "Bug RHOAIENG-13636 - re-creating isvc if there's already a modelmesh isvc in the namespace"
-                        )
-                        inference_service.clean_up()
-                        inference_service.deploy()
+    # Map scaling parameters
+    if any([min_replicas is not None, max_replicas is not None, autoscaler_mode,
+            scale_metric, scale_target, auto_scaling]):
+        builder.with_scaling(ScalingConfig(
+            min_replicas=min_replicas,
+            max_replicas=max_replicas,
+            autoscaler_mode=autoscaler_mode,
+            scale_metric=scale_metric,
+            scale_target=scale_target,
+            auto_scaling=auto_scaling
+        ))
 
-                        break
+    # Map security parameters
+    if enable_auth or model_service_account or image_pull_secrets:
+        builder.with_security(SecurityConfig(
+            enable_auth=enable_auth,
+            model_service_account=model_service_account,
+            image_pull_secrets=image_pull_secrets or []
+        ))
 
-            inference_service.wait_for_condition(
-                condition=inference_service.Condition.READY,
-                status=inference_service.Condition.Status.TRUE,
-                timeout=timeout_watch.remaining_time(),
-            )
+    # Map deployment parameters
+    if any([deployment_mode, external_route is not None, stop_resume,
+            scheduler_name, protocol_version, labels]):
+        builder.with_deployment(DeploymentConfig(
+            deployment_mode=deployment_mode,
+            external_route=external_route if external_route is not None else False,
+            stop_resume=stop_resume,
+            scheduler_name=scheduler_name,
+            protocol_version=protocol_version,
+            labels=labels or {}
+        ))
 
-            # After the InferenceService reports Ready, the backing model should be fully loaded and up to date,
-            # when modelStatus is reported by the runtime.
-            model_status = getattr(inference_service.instance.status, "modelStatus", None)
-            if model_status and getattr(model_status, "states", None):
-                active_state = model_status.states.activeModelState
-                target_state = model_status.states.targetModelState
-                transition_status = model_status.transitionStatus
-                if not (active_state == "Loaded" and target_state == "Loaded" and transition_status == "UpToDate"):
-                    raise AssertionError(
-                        "InferenceService modelStatus is not in Loaded/UpToDate state. "
-                        f"activeModelState={active_state!r}, "
-                        f"targetModelState={target_state!r}, "
-                        f"transitionStatus={transition_status!r}"
-                    )
+    # Map resource parameters
+    if any([argument, resources, volumes, volumes_mounts, model_env_variables]):
+        builder.with_resources(ResourceConfig(
+            arguments=argument or [],
+            resources=resources or {},
+            volumes=volumes or {},
+            volumes_mounts=volumes_mounts or {},
+            env_variables=model_env_variables or []
+        ))
 
+    # Map multi-node parameters
+    if multi_node_worker_spec:
+        builder.with_multi_node(MultiNodeConfig(
+            worker_spec=multi_node_worker_spec
+        ))
+
+    # Set model version
+    if model_version:
+        builder.with_model_version(model_version)
+
+    # Set operational parameters
+    builder.set_wait(wait, wait_for_predictor_pods)
+    builder.set_timeout(timeout)
+    builder.set_teardown(teardown)
+
+    # Build and yield
+    with builder.build() as inference_service:
         yield inference_service
 
 
