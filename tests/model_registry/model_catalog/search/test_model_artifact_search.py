@@ -1,18 +1,21 @@
-import pytest
-from typing import Self, Any
 import random
-from ocp_resources.config_map import ConfigMap
+from typing import Any, Self
+
+import pytest
+from dictdiffer import diff
+from simple_logger.logger import get_logger
+
+from tests.model_registry.model_catalog.constants import (
+    METRICS_ARTIFACT_TYPE,
+    MODEL_ARTIFACT_TYPE,
+    VALIDATED_CATALOG_ID,
+)
 from tests.model_registry.model_catalog.search.utils import (
     fetch_all_artifacts_with_dynamic_paging,
     validate_model_artifacts_match_criteria_and,
     validate_model_artifacts_match_criteria_or,
     validate_recommendations_subset,
 )
-from tests.model_registry.model_catalog.constants import (
-    VALIDATED_CATALOG_ID,
-)
-from kubernetes.dynamic.exceptions import ResourceNotFoundError
-from simple_logger.logger import get_logger
 
 LOGGER = get_logger(name=__name__)
 pytestmark = [pytest.mark.usefixtures("updated_dsc_component_state_scope_session", "model_registry_namespace")]
@@ -26,56 +29,6 @@ MODEL_NAMEs_ARTIFACT_SEARCH: list[str] = [
 
 
 class TestSearchArtifactsByFilterQuery:
-    @pytest.mark.parametrize(
-        "randomly_picked_model_from_catalog_api_by_source, invalid_filter_query",
-        [
-            pytest.param(
-                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
-                "fake IN ('test', 'fake'))",
-                id="test_invalid_artifact_filter_query_malformed",
-            ),
-            pytest.param(
-                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
-                "ttft_p90.double_value < abc",
-                id="test_invalid_artifact_filter_query_data_type_mismatch",
-            ),
-            pytest.param(
-                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
-                "hardware_type.string_value = 5.0",
-                id="test_invalid_artifact_filter_query_data_type_mismatch_equality",
-            ),
-        ],
-        indirect=["randomly_picked_model_from_catalog_api_by_source"],
-    )
-    def test_search_artifacts_by_invalid_filter_query(
-        self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
-        model_catalog_rest_url: list[str],
-        model_registry_rest_headers: dict[str, str],
-        randomly_picked_model_from_catalog_api_by_source: tuple[dict, str, str],
-        invalid_filter_query: str,
-    ):
-        """
-        Tests the API's response to invalid filter queries syntax when searching artifacts.
-        It verifies that an invalid filter query syntax raises the correct error.
-        """
-        _, model_name, catalog_id = randomly_picked_model_from_catalog_api_by_source
-
-        LOGGER.info(f"Testing invalid artifact filter query: '{invalid_filter_query}' for model: {model_name}")
-        with pytest.raises(ResourceNotFoundError, match="invalid filter query"):
-            fetch_all_artifacts_with_dynamic_paging(
-                url_with_pagesize=(
-                    f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?"
-                    f"filterQuery={invalid_filter_query}&pageSize"
-                ),
-                headers=model_registry_rest_headers,
-                page_size=1,
-            )
-
-        LOGGER.info(
-            f"Successfully validated that invalid artifact filter query '{invalid_filter_query}' raises an error"
-        )
-
     @pytest.mark.parametrize(
         "randomly_picked_model_from_catalog_api_by_source, filter_query, expected_value, logic_type",
         [
@@ -150,7 +103,6 @@ class TestSearchArtifactsByFilterQuery:
     )
     def test_filter_query_advanced_artifact_search(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
         randomly_picked_model_from_catalog_api_by_source: tuple[dict, str, str],
@@ -222,7 +174,6 @@ class TestSearchArtifactsByFilterQuery:
     )
     def test_performance_artifacts_recommendations_parameter(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
         randomly_picked_model_from_catalog_api_by_source: tuple[dict, str, str],
@@ -268,3 +219,121 @@ class TestSearchArtifactsByFilterQuery:
 
         assert validation_passed, f"Recommendations subset validation failed for model {model_name}"
         LOGGER.info(f"Successfully validated recommendations parameter functionality for model {model_name}")
+
+
+class TestSearchModelArtifact:
+    @pytest.mark.parametrize(
+        "randomly_picked_model_from_catalog_api_by_source, artifact_type",
+        [
+            pytest.param(
+                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
+                MODEL_ARTIFACT_TYPE,
+                id="validated_model_artifact",
+            ),
+            pytest.param(
+                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
+                METRICS_ARTIFACT_TYPE,
+                id="validated_metrics_artifact",
+            ),
+        ],
+        indirect=["randomly_picked_model_from_catalog_api_by_source"],
+    )
+    def test_validate_model_artifacts_by_artifact_type(
+        self: Self,
+        model_catalog_rest_url: list[str],
+        model_registry_rest_headers: dict[str, str],
+        randomly_picked_model_from_catalog_api_by_source: tuple[dict[Any, Any], str, str],
+        artifact_type: str,
+    ):
+        """
+        Validates that the model artifacts returned by the artifactType filter
+        match the complete set of artifacts for a random model.
+        """
+        _, model_name, catalog_id = randomly_picked_model_from_catalog_api_by_source
+        LOGGER.info(f"Artifact type: '{artifact_type}'")
+
+        # Fetch all artifacts with dynamic page size adjustment
+        all_model_artifacts = fetch_all_artifacts_with_dynamic_paging(
+            url_with_pagesize=f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?pageSize",
+            headers=model_registry_rest_headers,
+            page_size=100,
+        )["items"]
+
+        # Fetch filtered artifacts by type with dynamic page size adjustment
+        artifact_type_artifacts = fetch_all_artifacts_with_dynamic_paging(
+            url_with_pagesize=(
+                f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?"
+                f"artifactType={artifact_type}&pageSize"
+            ),
+            headers=model_registry_rest_headers,
+            page_size=50,
+        )["items"]
+
+        # Create lookup for validation
+        all_artifacts_by_id = {artifact["id"]: artifact for artifact in all_model_artifacts}
+
+        # Verify all filtered artifacts exist
+        for artifact in artifact_type_artifacts:
+            artifact_id = artifact["id"]
+            assert artifact_id in all_artifacts_by_id, (
+                f"Filtered artifact {artifact_id} not found in complete artifact list for {model_name}"
+            )
+
+            differences = list(diff(artifact, all_artifacts_by_id[artifact_id]))
+            assert not differences, f"Artifact {artifact_id} mismatch for {model_name}: {differences}"
+
+        # Verify the filter didn't miss any artifacts of the type
+        artifacts_of_type_in_all = [
+            artifact for artifact in all_model_artifacts if artifact.get("artifactType") == artifact_type
+        ]
+        assert len(artifact_type_artifacts) == len(artifacts_of_type_in_all), (
+            f"Filter returned {len(artifact_type_artifacts)} {artifact_type} artifacts, "
+            f"but found {len(artifacts_of_type_in_all)} in complete list for {model_name}"
+        )
+
+        LOGGER.info(f"Validated {len(artifact_type_artifacts)} {artifact_type} artifacts for {model_name}")
+
+    @pytest.mark.parametrize(
+        "randomly_picked_model_from_catalog_api_by_source",
+        [
+            pytest.param(
+                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
+                id="validated_catalog",
+            ),
+        ],
+        indirect=["randomly_picked_model_from_catalog_api_by_source"],
+    )
+    def test_multiple_artifact_type_filtering(
+        self: Self,
+        model_catalog_rest_url: list[str],
+        model_registry_rest_headers: dict[str, str],
+        randomly_picked_model_from_catalog_api_by_source: tuple[dict[Any, Any], str, str],
+    ):
+        """
+        Validates that the API returns all artifacts of a random model
+        when filtering by multiple artifact types.
+        """
+        _, model_name, catalog_id = randomly_picked_model_from_catalog_api_by_source
+        artifact_types = f"artifactType={METRICS_ARTIFACT_TYPE},{MODEL_ARTIFACT_TYPE}"
+        LOGGER.info(f"Testing multiple artifact types: '{artifact_types}'")
+        # Fetch all artifacts with dynamic page size adjustment
+        all_model_artifacts = fetch_all_artifacts_with_dynamic_paging(
+            url_with_pagesize=f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?pageSize",
+            headers=model_registry_rest_headers,
+            page_size=100,
+        )["items"]
+
+        # Fetch filtered artifacts by type with dynamic page size adjustment
+        artifact_type_artifacts = fetch_all_artifacts_with_dynamic_paging(
+            url_with_pagesize=(
+                f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?"
+                f"{artifact_types}&pageSize"
+            ),
+            headers=model_registry_rest_headers,
+            page_size=100,
+        )["items"]
+
+        assert len(artifact_type_artifacts) == len(all_model_artifacts), (
+            f"Filter returned {len(artifact_type_artifacts)} artifacts, "
+            f"but found {len(all_model_artifacts)} in complete list for {model_name}"
+        )

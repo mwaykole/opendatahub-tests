@@ -5,6 +5,7 @@ from ocp_resources.persistent_volume_claim import PersistentVolumeClaim
 from ocp_resources.resource import Resource
 from ocp_resources.secret import Secret
 from ocp_resources.service import Service
+
 from utilities.constants import ModelFormat
 
 
@@ -62,6 +63,7 @@ MARIADB_MY_CNF = (
 PORT_MAP = {
     "mariadb": 3306,
     "mysql": 3306,
+    "postgres": 5432,
 }
 MODEL_REGISTRY_POD_FILTER: str = "component=model-registry"
 DEFAULT_CUSTOM_MODEL_CATALOG: str = "model-catalog-sources"

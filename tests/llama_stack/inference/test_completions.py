@@ -1,6 +1,10 @@
 import pytest
 from llama_stack_client import LlamaStackClient
+from simple_logger.logger import get_logger
+
 from tests.llama_stack.constants import ModelInfo
+
+LOGGER = get_logger(name=__name__)
 
 
 @pytest.mark.parametrize(
@@ -21,7 +25,7 @@ class TestLlamaStackInferenceCompletions:
     - https://github.com/openai/openai-python/blob/main/api.md#completions-1
     """
 
-    @pytest.mark.smoke
+    @pytest.mark.tier1
     def test_inference_chat_completion(
         self,
         unprivileged_llama_stack_client: LlamaStackClient,
@@ -43,7 +47,7 @@ class TestLlamaStackInferenceCompletions:
         assert content is not None, "LLM response content is None"
         assert "ACK" in content, "The LLM didn't provide the expected answer to the prompt"
 
-    @pytest.mark.smoke
+    @pytest.mark.tier1
     def test_inference_completion(
         self,
         unprivileged_llama_stack_client: LlamaStackClient,
@@ -51,11 +55,12 @@ class TestLlamaStackInferenceCompletions:
     ) -> None:
         """Test text completion functionality with a geography question."""
         response = unprivileged_llama_stack_client.completions.create(
-            model=llama_stack_models.model_id, prompt="What is the capital of Catalonia?", max_tokens=7, temperature=0
+            model=llama_stack_models.model_id, prompt="What is the capital of Catalonia?", max_tokens=20, temperature=0
         )
         assert len(response.choices) > 0, "No response after basic inference on llama-stack server"
 
         # Check if response has the expected structure and content
         content = response.choices[0].text.lower()
         assert content is not None, "LLM response content is None"
+        LOGGER.info(f"LLM response content for test_inference_completion: {content}")
         assert "barcelona" in content, "The LLM didn't provide the expected answer to the prompt"

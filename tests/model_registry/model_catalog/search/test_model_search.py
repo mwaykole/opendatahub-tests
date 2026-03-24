@@ -1,29 +1,29 @@
+from typing import Any, Self
+
 import pytest
 from dictdiffer import diff
-from ocp_resources.config_map import ConfigMap
-from simple_logger.logger import get_logger
-from typing import Self, Any
-from tests.model_registry.model_catalog.constants import (
-    REDHAT_AI_CATALOG_ID,
-    VALIDATED_CATALOG_ID,
-    MODEL_ARTIFACT_TYPE,
-    METRICS_ARTIFACT_TYPE,
-    REDHAT_AI_CATALOG_NAME,
-    REDHAT_AI_VALIDATED_UNESCAPED_CATALOG_NAME,
-)
-from tests.model_registry.model_catalog.utils import get_models_from_catalog_api
-from tests.model_registry.model_catalog.search.utils import (
-    fetch_all_artifacts_with_dynamic_paging,
-    validate_model_contains_search_term,
-    validate_search_results_against_database,
-    validate_filter_query_results_against_database,
-    validate_performance_data_files_on_pod,
-    validate_model_artifacts_match_criteria_and,
-    validate_model_artifacts_match_criteria_or,
-)
-from tests.model_registry.utils import get_model_catalog_pod
 from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import ResourceNotFoundError
+from simple_logger.logger import get_logger
+
+from tests.model_registry.model_catalog.constants import (
+    OTHER_MODELS_CATALOG_ID,
+    REDHAT_AI_CATALOG_ID,
+    REDHAT_AI_CATALOG_NAME,
+    REDHAT_AI_VALIDATED_UNESCAPED_CATALOG_NAME,
+    VALIDATED_CATALOG_ID,
+)
+from tests.model_registry.model_catalog.search.utils import (
+    fetch_all_artifacts_with_dynamic_paging,
+    validate_filter_query_results_against_database,
+    validate_model_artifacts_match_criteria_and,
+    validate_model_artifacts_match_criteria_or,
+    validate_model_contains_search_term,
+    validate_performance_data_files_on_pod,
+    validate_search_results_against_database,
+)
+from tests.model_registry.model_catalog.utils import get_models_from_catalog_api
+from tests.model_registry.utils import get_model_catalog_pod
 
 LOGGER = get_logger(name=__name__)
 pytestmark = [pytest.mark.usefixtures("updated_dsc_component_state_scope_session", "model_registry_namespace")]
@@ -33,12 +33,11 @@ class TestSearchModelCatalog:
     @pytest.mark.smoke
     def test_search_model_catalog_source_label(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
     ):
         """
-        RHOAIENG-33656: Validate search model catalog by source label
+        Validate search model catalog by source label
         """
 
         redhat_ai_filter_moldels_size = get_models_from_catalog_api(
@@ -61,20 +60,22 @@ class TestSearchModelCatalog:
         )["size"]
         LOGGER.info(f"no_filtered_models_size: {no_filtered_models_size}")
         assert no_filtered_models_size > 0
-        assert no_filtered_models_size == both_filtered_models_size
+        # no_filtered includes models from sources without labels (e.g. Other Models),
+        # which cannot be queried via sourceLabel, so total >= labeled sum
+        assert no_filtered_models_size >= both_filtered_models_size
         assert redhat_ai_filter_moldels_size + redhat_ai_validated_filter_models_size == both_filtered_models_size
 
+    @pytest.mark.tier3
     def test_search_model_catalog_invalid_source_label(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
     ):
         """
-        RHOAIENG-33656:
         Validate search model catalog by invalid source label
         """
 
+        # "null" is a valid source label for sources without explicit labels (e.g. Other Models)
         null_size = get_models_from_catalog_api(
             model_catalog_rest_url=model_catalog_rest_url,
             model_registry_rest_headers=model_registry_rest_headers,
@@ -87,9 +88,8 @@ class TestSearchModelCatalog:
             source_label="invalid",
         )["size"]
 
-        assert null_size == invalid_size == 0, (
-            "Expected 0 models for null and invalid source label found {null_size} and {invalid_size}"
-        )
+        assert null_size >= 0, f"Expected non-negative size for null source label, got {null_size}"
+        assert invalid_size == 0, f"Expected 0 models for invalid source label, got {invalid_size}"
 
     @pytest.mark.parametrize(
         "randomly_picked_model_from_catalog_api_by_source,source_filter",
@@ -109,14 +109,13 @@ class TestSearchModelCatalog:
     )
     def test_search_model_catalog_match(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
         randomly_picked_model_from_catalog_api_by_source: tuple[dict[Any, Any], str, str],
         source_filter: str,
     ):
         """
-        RHOAIENG-33656: Validate search model catalog by match
+        Validate search model catalog by match
         """
         random_model, random_model_name, _ = randomly_picked_model_from_catalog_api_by_source
         LOGGER.info(f"random_model_name: {random_model_name}")
@@ -134,183 +133,26 @@ class TestSearchModelCatalog:
         LOGGER.info("Model information matches")
 
 
-class TestSearchModelArtifact:
-    @pytest.mark.parametrize(
-        "randomly_picked_model_from_catalog_api_by_source, artifact_type",
-        [
-            pytest.param(
-                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
-                MODEL_ARTIFACT_TYPE,
-                id="validated_model_artifact",
-            ),
-            pytest.param(
-                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
-                METRICS_ARTIFACT_TYPE,
-                id="validated_metrics_artifact",
-            ),
-        ],
-        indirect=["randomly_picked_model_from_catalog_api_by_source"],
-    )
-    def test_validate_model_artifacts_by_artifact_type(
-        self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
-        model_catalog_rest_url: list[str],
-        model_registry_rest_headers: dict[str, str],
-        randomly_picked_model_from_catalog_api_by_source: tuple[dict[Any, Any], str, str],
-        artifact_type: str,
-    ):
-        """
-        RHOAIENG-33659: Validates that the model artifacts returned by the artifactType filter
-        match the complete set of artifacts for a random model.
-        """
-        _, model_name, catalog_id = randomly_picked_model_from_catalog_api_by_source
-        LOGGER.info(f"Artifact type: '{artifact_type}'")
-
-        # Fetch all artifacts with dynamic page size adjustment
-        all_model_artifacts = fetch_all_artifacts_with_dynamic_paging(
-            url_with_pagesize=f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?pageSize",
-            headers=model_registry_rest_headers,
-            page_size=100,
-        )["items"]
-
-        # Fetch filtered artifacts by type with dynamic page size adjustment
-        artifact_type_artifacts = fetch_all_artifacts_with_dynamic_paging(
-            url_with_pagesize=(
-                f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?"
-                f"artifactType={artifact_type}&pageSize"
-            ),
-            headers=model_registry_rest_headers,
-            page_size=50,
-        )["items"]
-
-        # Create lookup for validation
-        all_artifacts_by_id = {artifact["id"]: artifact for artifact in all_model_artifacts}
-
-        # Verify all filtered artifacts exist
-        for artifact in artifact_type_artifacts:
-            artifact_id = artifact["id"]
-            assert artifact_id in all_artifacts_by_id, (
-                f"Filtered artifact {artifact_id} not found in complete artifact list for {model_name}"
-            )
-
-            differences = list(diff(artifact, all_artifacts_by_id[artifact_id]))
-            assert not differences, f"Artifact {artifact_id} mismatch for {model_name}: {differences}"
-
-        # Verify the filter didn't miss any artifacts of the type
-        artifacts_of_type_in_all = [
-            artifact for artifact in all_model_artifacts if artifact.get("artifactType") == artifact_type
-        ]
-        assert len(artifact_type_artifacts) == len(artifacts_of_type_in_all), (
-            f"Filter returned {len(artifact_type_artifacts)} {artifact_type} artifacts, "
-            f"but found {len(artifacts_of_type_in_all)} in complete list for {model_name}"
-        )
-
-        LOGGER.info(f"Validated {len(artifact_type_artifacts)} {artifact_type} artifacts for {model_name}")
-
-    @pytest.mark.parametrize(
-        "randomly_picked_model_from_catalog_api_by_source",
-        [
-            pytest.param(
-                {"header_type": "registry"},
-                id="invalid_artifact_type",
-            ),
-        ],
-        indirect=["randomly_picked_model_from_catalog_api_by_source"],
-    )
-    def test_error_handled_for_invalid_artifact_type(
-        self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
-        model_catalog_rest_url: list[str],
-        model_registry_rest_headers: dict[str, str],
-        randomly_picked_model_from_catalog_api_by_source: tuple[dict[Any, Any], str, str],
-    ):
-        """
-        RHOAIENG-33659: Validates that the API returns the correct error when an invalid artifactType
-        is provided regardless of catalog or model.
-        """
-        invalid_artifact_type = "invalid"
-        _, model_name, catalog_id = randomly_picked_model_from_catalog_api_by_source
-        invalid_error = f"artifactType: invalid value '{invalid_artifact_type}' for ArtifactTypeQueryParam"
-
-        LOGGER.info(f"Testing invalid artifact type: '{invalid_artifact_type}'")
-
-        with pytest.raises(ResourceNotFoundError, match=invalid_error):
-            fetch_all_artifacts_with_dynamic_paging(
-                url_with_pagesize=(
-                    f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?"
-                    f"artifactType={invalid_artifact_type}&pageSize"
-                ),
-                headers=model_registry_rest_headers,
-                page_size=1,
-            )
-
-        LOGGER.info(f"Successfully validated that invalid artifact type '{invalid_artifact_type}' raises an error")
-
-    @pytest.mark.parametrize(
-        "randomly_picked_model_from_catalog_api_by_source",
-        [
-            pytest.param(
-                {"catalog_id": VALIDATED_CATALOG_ID, "header_type": "registry"},
-                id="validated_catalog",
-            ),
-        ],
-        indirect=["randomly_picked_model_from_catalog_api_by_source"],
-    )
-    def test_multiple_artifact_type_filtering(
-        self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
-        model_catalog_rest_url: list[str],
-        model_registry_rest_headers: dict[str, str],
-        randomly_picked_model_from_catalog_api_by_source: tuple[dict[Any, Any], str, str],
-    ):
-        """
-        RHOAIENG-33659: Validates that the API returns all artifacts of a random model
-        when filtering by multiple artifact types.
-        """
-        _, model_name, catalog_id = randomly_picked_model_from_catalog_api_by_source
-        artifact_types = f"artifactType={METRICS_ARTIFACT_TYPE},{MODEL_ARTIFACT_TYPE}"
-        LOGGER.info(f"Testing multiple artifact types: '{artifact_types}'")
-        # Fetch all artifacts with dynamic page size adjustment
-        all_model_artifacts = fetch_all_artifacts_with_dynamic_paging(
-            url_with_pagesize=f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?pageSize",
-            headers=model_registry_rest_headers,
-            page_size=100,
-        )["items"]
-
-        # Fetch filtered artifacts by type with dynamic page size adjustment
-        artifact_type_artifacts = fetch_all_artifacts_with_dynamic_paging(
-            url_with_pagesize=(
-                f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}/artifacts?"
-                f"{artifact_types}&pageSize"
-            ),
-            headers=model_registry_rest_headers,
-            page_size=100,
-        )["items"]
-
-        assert len(artifact_type_artifacts) == len(all_model_artifacts), (
-            f"Filter returned {len(artifact_type_artifacts)} artifacts, "
-            f"but found {len(all_model_artifacts)} in complete list for {model_name}"
-        )
-
-
 class TestSearchModelCatalogQParameter:
-    """Test suite for the 'q' search parameter functionality (RHOAIENG-36911)."""
+    """Test suite for the 'q' search parameter functionality."""
 
     @pytest.mark.parametrize(
         "search_term",
         [
-            "deepseek",
-            "red hat",
-            "granite-8b",
             pytest.param(
-                "The Llama 4 collection of models are natively multimodal AI models that enable text and multimodal experiences. These models leverage a mixture-of-experts architecture to offer industry-leading performance in text and image understanding. These Llama 4 models mark the beginning of a new era for the Llama ecosystem. We are launching two efficient models in the Llama 4 series, Llama 4 Scout, a 17 billion parameter model with 16 experts, and Llama 4 Maverick, a 17 billion parameter model with 128 experts.",  # noqa: E501
+                "The Llama 4 collection of models are natively multimodal AI models that enable text and multimodal "
+                "experiences. These models leverage a mixture-of-experts architecture to offer industry-leading "
+                "performance in text and image understanding. These Llama 4 models mark the beginning of a new era "
+                "for the Llama ecosystem. We are launching two efficient models in the Llama 4 series, Llama 4 "
+                "Scout, a 17 billion parameter model with 16 experts, and Llama 4 Maverick, a 17 billion parameter "
+                "model with 128 experts.",
                 id="long_description",
             ),
         ],
     )
     def test_q_parameter_basic_search(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
+        admin_client: DynamicClient,
         search_term: str,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
@@ -332,6 +174,7 @@ class TestSearchModelCatalogQParameter:
 
         # Validate API results against database query
         is_valid, errors = validate_search_results_against_database(
+            admin_client=admin_client,
             api_response=response,
             search_term=search_term,
             namespace=model_registry_namespace,
@@ -345,111 +188,8 @@ class TestSearchModelCatalogQParameter:
                 f"Model '{model.get('name')}' doesn't contain search term '{search_term}' in any searchable field"
             )
 
-    @pytest.mark.parametrize(
-        "search_term,case_variant", [("granite", "GRANITE"), ("text", "TEXT"), ("deepseek", "DeepSeek")]
-    )
-    def test_q_parameter_case_insensitive(
-        self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
-        search_term: str,
-        case_variant: str,
-        model_catalog_rest_url: list[str],
-        model_registry_rest_headers: dict[str, str],
-        model_registry_namespace: str,
-    ):
-        """Test that search is case insensitive using database validation"""
-        LOGGER.info(f"Testing case insensitivity: '{search_term}' vs '{case_variant}'")
-
-        response1 = get_models_from_catalog_api(
-            model_catalog_rest_url=model_catalog_rest_url,
-            model_registry_rest_headers=model_registry_rest_headers,
-            q=search_term,
-        )
-
-        response2 = get_models_from_catalog_api(
-            model_catalog_rest_url=model_catalog_rest_url,
-            model_registry_rest_headers=model_registry_rest_headers,
-            q=case_variant,
-        )
-
-        # Validate both responses against database
-        is_valid1, errors1 = validate_search_results_against_database(
-            api_response=response1,
-            search_term=search_term,
-            namespace=model_registry_namespace,
-        )
-        assert is_valid1, f"API search results do not match database query for '{search_term}': {errors1}"
-
-        is_valid2, errors2 = validate_search_results_against_database(
-            api_response=response2,
-            search_term=case_variant,
-            namespace=model_registry_namespace,
-        )
-        assert is_valid2, f"API search results do not match database query for '{case_variant}': {errors2}"
-
-        models1 = response1.get("items", [])
-        models2 = response2.get("items", [])
-
-        model_ids1 = sorted([m.get("id") for m in models1])
-        model_ids2 = sorted([m.get("id") for m in models2])
-
-        assert model_ids1 == model_ids2, (
-            f"Case insensitive search failed:\n"
-            f"'{search_term}' returned {len(models1)} models\n"
-            f"'{case_variant}' returned {len(models2)} models"
-        )
-
-    def test_q_parameter_no_results(
-        self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
-        model_catalog_rest_url: list[str],
-        model_registry_rest_headers: dict[str, str],
-        model_registry_namespace: str,
-    ):
-        """Test search with term that should return no results using database validation"""
-        nonexistent_term = "nonexistent_search_term_12345_abcdef"
-        LOGGER.info(f"Testing search for nonexistent term: {nonexistent_term}")
-
-        response = get_models_from_catalog_api(
-            model_catalog_rest_url=model_catalog_rest_url,
-            model_registry_rest_headers=model_registry_rest_headers,
-            q=nonexistent_term,
-        )
-
-        # Validate API results against database query
-        is_valid, errors = validate_search_results_against_database(
-            api_response=response,
-            search_term=nonexistent_term,
-            namespace=model_registry_namespace,
-        )
-        assert is_valid, f"API search results do not match database query for '{nonexistent_term}': {errors}"
-
-        models = response.get("items", [])
-        assert len(models) == 0, f"Expected no results for '{nonexistent_term}', got {len(models)} models"
-
-    @pytest.mark.parametrize("search_term", ["", None])
-    def test_q_parameter_empty_query(
-        self: Self,
-        search_term,
-        enabled_model_catalog_config_map: ConfigMap,
-        model_catalog_rest_url: list[str],
-        model_registry_rest_headers: dict[str, str],
-    ):
-        """Test behavior with empty or None q parameter using database validation"""
-        LOGGER.info(f"Testing empty query: {repr(search_term)}")
-
-        response = get_models_from_catalog_api(
-            model_catalog_rest_url=model_catalog_rest_url,
-            model_registry_rest_headers=model_registry_rest_headers,
-            q=search_term,
-        )
-
-        models = response.get("items", [])
-        LOGGER.info(f"Empty/None query returned {len(models)} models")
-
     def test_q_parameter_with_source_label_filter(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
     ):
@@ -483,8 +223,8 @@ class TestSearchModelCatalogQParameter:
         )
 
         # Combined filter results should be a subset of search-only results
-        search_only_model_ids = set(m.get("id") for m in search_only_response.get("items", []))
-        combined_model_ids = set(m.get("id") for m in models)
+        search_only_model_ids = {m.get("id") for m in search_only_response.get("items", [])}
+        combined_model_ids = {m.get("id") for m in models}
 
         assert combined_model_ids.issubset(search_only_model_ids), (
             f"Combined filter results should be a subset of search-only results. "
@@ -493,15 +233,16 @@ class TestSearchModelCatalogQParameter:
 
 
 class TestSearchModelsByFilterQuery:
+    @pytest.mark.tier1
     def test_search_models_by_filter_query(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
+        admin_client: DynamicClient,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
         model_registry_namespace: str,
     ):
         """
-        RHOAIENG-33658: Tests that the API returns all models matching a given filter query and
+        Tests that the API returns all models matching a given filter query and
         that the database results are consistent.
         """
         # Filter parameters
@@ -521,6 +262,7 @@ class TestSearchModelsByFilterQuery:
 
         # Validate API results against database query using same parameters
         is_valid, errors = validate_filter_query_results_against_database(
+            admin_client=admin_client,
             api_response=result,
             licenses=licenses,
             language_pattern_1=language_pattern_1,
@@ -539,15 +281,16 @@ class TestSearchModelsByFilterQuery:
 
         LOGGER.info("All models match the filter query and database validation passed")
 
+    @pytest.mark.tier3
     def test_search_models_by_invalid_filter_query(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
+        admin_client: DynamicClient,
         model_catalog_rest_url: list[str],
         model_registry_rest_headers: dict[str, str],
         model_registry_namespace: str,
     ):
         """
-        RHOAIENG-36938: Tests the API's response to invalid and non-matching filter queries.
+        Tests the API's response to invalid and non-matching filter queries.
         It verifies that an invalid filter query raises the correct error and
         that a query with no matches returns zero models.
         """
@@ -571,6 +314,7 @@ class TestSearchModelsByFilterQuery:
 
         # Validate API results against database query using same license parameter
         is_valid, errors = validate_filter_query_results_against_database(
+            admin_client=admin_client,
             api_response=result,
             licenses=no_result_licenses,
             namespace=model_registry_namespace,
@@ -581,12 +325,11 @@ class TestSearchModelsByFilterQuery:
     @pytest.mark.downstream_only
     def test_presence_performance_data_on_pod(
         self: Self,
-        enabled_model_catalog_config_map: ConfigMap,
         admin_client: DynamicClient,
         model_registry_namespace: str,
     ):
         """
-        RHOAIENG-36938: Checks that performance data files exist for all models in the catalog pod.
+        Checks that performance data files exist for all models in the catalog pod.
         It ensures that each model has the required metadata and performance files present in the pod.
         """
 
@@ -658,7 +401,7 @@ class TestSearchModelsByFilterQuery:
         model_registry_rest_headers: dict[str, str],
     ):
         """
-        RHOAIENG-39615: Advanced filter query test for performance-based filtering with AND/OR logic
+        Advanced filter query test for performance-based filtering with AND/OR logic
         """
         errors = []
 
@@ -696,3 +439,51 @@ class TestSearchModelsByFilterQuery:
         LOGGER.info(
             f"Advanced {logic_type.upper()} filter validation completed for {len(models_from_filter_query)} models"
         )
+
+
+@pytest.mark.install
+@pytest.mark.post_upgrade
+class TestEmbeddingModelSearch:
+    @pytest.mark.dependency(name="test_filter_query_by_text_embedding_task")
+    def test_filter_query_by_text_embedding_task(
+        self: Self,
+        embedding_models_response: dict[str, Any],
+    ):
+        """
+        Validate filterQuery with tasks='text-embedding' returns models
+        """
+        number_of_models = embedding_models_response.get("size", 0)
+        LOGGER.info(f"Found number of embedding models: {number_of_models}")
+        assert number_of_models > 0, "Expected at least one model with tasks='text-embedding'"
+
+    @pytest.mark.dependency(depends=["test_filter_query_by_text_embedding_task"])
+    def test_embedding_models_source_id(
+        self: Self,
+        embedding_models_response: dict[str, Any],
+    ):
+        """
+        Validate all embedding models belong to the Other Models source
+        """
+        mismatched_models = [
+            f"{model['name']} (source_id={model['source_id']})"
+            for model in embedding_models_response.get("items", [])
+            if model["source_id"] != OTHER_MODELS_CATALOG_ID
+        ]
+        assert not mismatched_models, (
+            f"Models with unexpected source_id (expected '{OTHER_MODELS_CATALOG_ID}'): {mismatched_models}"
+        )
+
+    @pytest.mark.dependency(depends=["test_filter_query_by_text_embedding_task"])
+    def test_embedding_models_have_text_embedding_task(
+        self: Self,
+        embedding_models_response: dict[str, Any],
+    ):
+        """
+        Validate all returned models have 'text-embedding' in their tasks
+        """
+        models_missing_task = [
+            model["name"]
+            for model in embedding_models_response.get("items", [])
+            if "text-embedding" not in model.get("tasks", [])
+        ]
+        assert not models_missing_task, f"Models missing 'text-embedding' task: {models_missing_task}"

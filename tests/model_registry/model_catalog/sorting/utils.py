@@ -1,16 +1,18 @@
 from typing import Any
 
+from kubernetes.dynamic import DynamicClient
 from simple_logger.logger import get_logger
-from tests.model_registry.utils import execute_get_command
-from tests.model_registry.model_catalog.utils import (
-    execute_database_query,
-    parse_psql_output,
-    get_models_from_catalog_api,
-)
+
 from tests.model_registry.model_catalog.db_constants import (
     GET_MODELS_BY_ACCURACY_DB_QUERY,
     GET_MODELS_BY_ACCURACY_WITH_TASK_FILTER_DB_QUERY,
 )
+from tests.model_registry.model_catalog.utils import (
+    execute_database_query,
+    get_models_from_catalog_api,
+    parse_psql_output,
+)
+from tests.model_registry.utils import execute_get_command
 
 LOGGER = get_logger(name=__name__)
 
@@ -176,6 +178,7 @@ def verify_custom_properties_sorted(items: list[dict], property_field: str, sort
 
 
 def validate_accuracy_sorting_against_database(
+    admin_client: DynamicClient,
     api_response: dict[str, Any],
     sort_order: str | None,
     namespace: str = "rhoai-model-registries",
@@ -193,6 +196,7 @@ def validate_accuracy_sorting_against_database(
       2. Models WITHOUT accuracy appear after, sorted by model ID in ASC order
 
     Args:
+        admin_client: DynamicClient with admin credentials
         api_response: API response from models endpoint with accuracy sorting
         sort_order: Sort order used (ASC, DESC, or None for no specific order)
         namespace: OpenShift namespace for PostgreSQL pod
@@ -203,7 +207,7 @@ def validate_accuracy_sorting_against_database(
     """
     # Get models with accuracy from database
     models_with_accuracy = get_models_by_accuracy_from_database(
-        sort_order=sort_order or "ASC", namespace=namespace, task_filter=task_filter
+        admin_client=admin_client, sort_order=sort_order or "ASC", namespace=namespace, task_filter=task_filter
     )
     filter_info = f" with task filter '{task_filter}'" if task_filter else ""
     sort_info = f", ordered {sort_order}" if sort_order else " (no sort order)"
@@ -252,6 +256,7 @@ def validate_accuracy_sorting_against_database(
 
 
 def get_models_by_accuracy_from_database(
+    admin_client: DynamicClient,
     sort_order: str,
     namespace: str = "rhoai-model-registries",
     task_filter: str | None = None,
@@ -260,6 +265,7 @@ def get_models_by_accuracy_from_database(
     Query the database to get model names ordered by accuracy (overall_average).
 
     Args:
+        admin_client: Admin client to use
         sort_order: Sort order for accuracy values (ASC or DESC)
         namespace: OpenShift namespace containing the PostgreSQL pod
         task_filter: Optional task filter value (e.g., "automatic-speech-recognition")
@@ -277,7 +283,7 @@ def get_models_by_accuracy_from_database(
     LOGGER.debug(f"Accuracy query (SQL): {accuracy_query}")
 
     # Execute the database query
-    db_result = execute_database_query(query=accuracy_query, namespace=namespace)
+    db_result = execute_database_query(admin_client=admin_client, query=accuracy_query, namespace=namespace)
     parsed_result = parse_psql_output(psql_output=db_result)
 
     # The query returns context_name values in order
@@ -398,12 +404,112 @@ def _verify_models_with_accuracy_sorted(
             return False
     else:
         # Only validate presence, not order
-        actual_names = set([name for _, name in models])
+        actual_names = {name for _, name in models}
         expected_names = set(expected_models)
         if actual_names != expected_names:
             LOGGER.error("Models with accuracy do not match expected models from database")
             return False
     return True
+
+
+def get_minimum_artifact_property_value(
+    model_catalog_rest_url: list[str],
+    model_registry_rest_headers: dict[str, str],
+    source_id: str,
+    model_name: str,
+    property_field: str,
+    artifact_filter_query: str | None = None,
+    sort_order: str = "ASC",
+    recommendations: bool = False,
+) -> float | None:
+    """
+    Get the minimum value of an artifact property for a given model.
+
+    Args:
+        model_catalog_rest_url: REST URL for model catalog
+        model_registry_rest_headers: Headers for model registry REST API
+        source_id: Source ID for the model
+        model_name: Name of the model
+        property_field: Property field to get minimum value for
+        artifact_filter_query: Optional filter query for artifacts (without "artifacts." prefix)
+        sort_order: Sort order for the artifact property
+        recommendations: Whether to filter to only recommended artifacts
+
+    Returns:
+        Minimum property value, or None if no artifacts found
+    """
+    # Build the artifacts endpoint URL
+    base_url = f"{model_catalog_rest_url[0]}sources/{source_id}/models/{model_name}/artifacts/performance"
+
+    params = {
+        "orderBy": property_field,
+        "sortOrder": sort_order,
+        "pageSize": 1,
+    }
+
+    if artifact_filter_query:
+        params["filterQuery"] = artifact_filter_query
+
+    if recommendations:
+        params["recommendations"] = "true"
+
+    response = execute_get_command(url=base_url, headers=model_registry_rest_headers, params=params)
+
+    items = response.get("items", [])
+    if not items:
+        return None
+
+    # Extract the property value from the first (minimum) artifact
+    property_name, value_type = property_field.rsplit(".", 1)
+    custom_props = items[0].get("customProperties", {})
+
+    if property_name not in custom_props:
+        return None
+
+    prop = custom_props[property_name]
+    return prop.get(value_type) if isinstance(prop, dict) else None
+
+
+def get_model_latencies(
+    model_names: list[str],
+    model_catalog_rest_url: list[str],
+    model_registry_rest_headers: dict[str, str],
+    source_id: str,
+    property_field: str,
+    artifact_filter_query: str,
+    sort_order: str,
+    recommendations: bool,
+) -> list[float]:
+    """
+    Fetch minimum artifact property values for a list of models.
+
+    Args:
+        model_names: List of model names
+        model_catalog_rest_url: REST URL for model catalog
+        model_registry_rest_headers: Headers for model registry REST API
+        source_id: Source ID for the models
+        property_field: Property field to get minimum value for
+        artifact_filter_query: Filter query for artifacts (without "artifacts." prefix)
+        sort_order: Sort order for the artifact property
+        recommendations: Whether to filter to only recommended artifacts
+
+    Returns:
+        List of minimum property values for each model
+    """
+    latencies = []
+    for model_name in model_names:
+        latency = get_minimum_artifact_property_value(
+            model_catalog_rest_url=model_catalog_rest_url,
+            model_registry_rest_headers=model_registry_rest_headers,
+            source_id=source_id,
+            model_name=model_name,
+            property_field=property_field,
+            artifact_filter_query=artifact_filter_query,
+            sort_order=sort_order,
+            recommendations=recommendations,
+        )
+        latencies.append(latency)
+    return latencies
 
 
 def assert_model_sorting(

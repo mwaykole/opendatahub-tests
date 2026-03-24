@@ -1,92 +1,107 @@
 import random
-from typing import Generator, Any
-import requests
+from collections.abc import Generator
+from typing import Any
 
-from simple_logger.logger import get_logger
-import yaml
 import pytest
+import requests
+import yaml
 from kubernetes.dynamic import DynamicClient
-
 from ocp_resources.config_map import ConfigMap
 from ocp_resources.resource import ResourceEditor
+from ocp_resources.route import Route
 from ocp_resources.service_account import ServiceAccount
-from tests.model_registry.model_catalog.constants import (
-    SAMPLE_MODEL_NAME3,
-    DEFAULT_CATALOG_FILE,
-    CATALOG_CONTAINER,
-    REDHAT_AI_CATALOG_ID,
-    DEFAULT_CATALOGS,
-)
-from tests.model_registry.model_catalog.utils import get_models_from_catalog_api, get_catalog_url_and_headers
+from simple_logger.logger import get_logger
+
 from tests.model_registry.constants import (
     CUSTOM_CATALOG_ID1,
-    DEFAULT_MODEL_CATALOG_CM,
     DEFAULT_CUSTOM_MODEL_CATALOG,
 )
-from tests.model_registry.utils import (
-    get_rest_headers,
-    is_model_catalog_ready,
-    get_model_catalog_pod,
-    wait_for_model_catalog_api,
-    execute_get_command,
-    get_model_str,
-    get_mr_user_token,
+from tests.model_registry.model_catalog.catalog_config.utils import get_models_from_database_by_source
+from tests.model_registry.model_catalog.constants import (
+    CATALOG_CONTAINER,
+    DEFAULT_CATALOG_FILE,
+    DEFAULT_CATALOGS,
+    REDHAT_AI_CATALOG_ID,
+    SAMPLE_MODEL_NAME3,
 )
-from utilities.infra import get_openshift_token, create_inference_token, login_with_user_password
-
+from tests.model_registry.model_catalog.utils import (
+    get_model_str,
+    get_models_from_catalog_api,
+    wait_for_model_catalog_api,
+)
+from tests.model_registry.utils import (
+    execute_get_command,
+    get_model_catalog_pod,
+    get_mr_user_token,
+    get_rest_headers,
+    wait_for_model_catalog_pod_ready_after_deletion,
+)
+from utilities.infra import create_inference_token, get_openshift_token, login_with_user_password
 
 LOGGER = get_logger(name=__name__)
 
 
-@pytest.fixture(scope="session")
-def enabled_model_catalog_config_map(
-    admin_client: DynamicClient,
+@pytest.fixture()
+def sparse_override_catalog_source(
+    request: pytest.FixtureRequest,
+    admin_client,
     model_registry_namespace: str,
-    current_client_token: str,
-) -> ConfigMap:
+    model_catalog_rest_url: list[str],
+    model_registry_rest_headers: dict[str, str],
+) -> Generator[dict]:
     """
-    Enable all catalogs in the default model catalog configmap
+    Creates a sparse override for an existing default catalog source.
+
+    Requires parameterization via request.param dict containing:
+    - "id": catalog ID to override (required)
+    - "field_name": name of the field to override (required)
+    - "field_value": value for the field (required)
     """
-    # Get operator-managed default sources ConfigMap
-    default_sources_cm = ConfigMap(
-        name=DEFAULT_MODEL_CATALOG_CM, client=admin_client, namespace=model_registry_namespace, ensure_exists=True
+    # Get fields from pytest param
+    param = getattr(request, "param", None)
+    assert param, "sparse_override_catalog_source requires request.param dict"
+
+    catalog_id = param["id"]
+    field_name = param["field_name"]
+    field_value = param["field_value"]
+
+    # Capture CURRENT catalog state from API before applying sparse override
+    response = execute_get_command(url=f"{model_catalog_rest_url[0]}sources", headers=model_registry_rest_headers)
+    items = response.get("items", [])
+    original_catalog = next((item for item in items if item.get("id") == catalog_id), None)
+    assert original_catalog is not None, f"Original catalog '{catalog_id}' not found in sources"
+
+    # Create sparse override YAML with only id and the field to override
+    catalog_override = {"id": catalog_id, field_name: field_value}
+    sparse_catalog_yaml = yaml.dump(
+        {"catalogs": [catalog_override]},
+        default_flow_style=False,
     )
 
-    # Get the sources.yaml content from default sources
-    default_sources_yaml = default_sources_cm.instance.data.get("sources.yaml", "")
-
-    # Parse the YAML and extract only catalogs, enabling each one
-    parsed_yaml = yaml.safe_load(default_sources_yaml)
-    if not parsed_yaml or "catalogs" not in parsed_yaml:
-        raise RuntimeError("No catalogs found in default sources ConfigMap")
-
-    for catalog in parsed_yaml["catalogs"]:
-        catalog["enabled"] = True
-    enabled_yaml_dict = {"catalogs": parsed_yaml["catalogs"]}
-    enabled_sources_yaml = yaml.dump(enabled_yaml_dict, default_flow_style=False, sort_keys=False)
-
-    LOGGER.info("Adding enabled catalogs to model-catalog-sources ConfigMap")
-
-    # Get user-managed sources ConfigMap
-    user_sources_cm = ConfigMap(
-        name=DEFAULT_CUSTOM_MODEL_CATALOG, client=admin_client, namespace=model_registry_namespace, ensure_exists=True
+    # Write sparse override to custom ConfigMap
+    sources_cm = ConfigMap(
+        name=DEFAULT_CUSTOM_MODEL_CATALOG,
+        client=admin_client,
+        namespace=model_registry_namespace,
     )
+    patches = {"data": {"sources.yaml": sparse_catalog_yaml}}
 
-    patches = {"data": {"sources.yaml": enabled_sources_yaml}}
-
-    with ResourceEditor(patches={user_sources_cm: patches}):
-        # Wait for the model catalog pod to be ready
-        is_model_catalog_ready(client=admin_client, model_registry_namespace=model_registry_namespace)
-
-        # Get the model catalog URL and headers and wait for the API to be fully ready
-        catalog_url, headers = get_catalog_url_and_headers(
-            admin_client=admin_client,
-            model_registry_namespace=model_registry_namespace,
-            token=current_client_token,
+    with ResourceEditor(patches={sources_cm: patches}):
+        wait_for_model_catalog_pod_ready_after_deletion(
+            client=admin_client, model_registry_namespace=model_registry_namespace
         )
-        wait_for_model_catalog_api(url=catalog_url, headers=headers)
+        wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
+        yield {
+            "catalog_id": catalog_id,
+            "field_name": field_name,
+            "field_value": field_value,
+            "original_catalog": original_catalog,
+        }
 
-        yield user_sources_cm
+    wait_for_model_catalog_pod_ready_after_deletion(
+        client=admin_client, model_registry_namespace=model_registry_namespace
+    )
+    wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
 
 
 @pytest.fixture(scope="class")
@@ -108,7 +123,7 @@ def updated_catalog_config_map(
     admin_client: DynamicClient,
     model_catalog_rest_url: list[str],
     model_registry_rest_headers: dict[str, str],
-) -> Generator[ConfigMap, None, None]:
+) -> Generator[ConfigMap]:
     if pytestconfig.option.post_upgrade or pytestconfig.option.pre_upgrade:
         yield catalog_config_map
     else:
@@ -118,10 +133,15 @@ def updated_catalog_config_map(
                 patches["data"][key] = request.param["sample_yaml"][key]
 
         with ResourceEditor(patches={catalog_config_map: patches}):
-            is_model_catalog_ready(client=admin_client, model_registry_namespace=model_registry_namespace)
+            wait_for_model_catalog_pod_ready_after_deletion(
+                client=admin_client, model_registry_namespace=model_registry_namespace
+            )
             wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
             yield catalog_config_map
-        is_model_catalog_ready(client=admin_client, model_registry_namespace=model_registry_namespace)
+        wait_for_model_catalog_pod_ready_after_deletion(
+            client=admin_client, model_registry_namespace=model_registry_namespace
+        )
+        wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
 
 
 @pytest.fixture(scope="class")
@@ -142,14 +162,19 @@ def update_configmap_data_add_model(
     admin_client: DynamicClient,
     model_catalog_rest_url: list[str],
     model_registry_rest_headers: dict[str, str],
-) -> Generator[ConfigMap, None, None]:
+) -> Generator[ConfigMap]:
     patches = catalog_config_map.instance.to_dict()
     patches["data"][f"{CUSTOM_CATALOG_ID1.replace('_', '-')}.yaml"] += get_model_str(model=SAMPLE_MODEL_NAME3)
     with ResourceEditor(patches={catalog_config_map: patches}):
-        is_model_catalog_ready(client=admin_client, model_registry_namespace=model_registry_namespace)
+        wait_for_model_catalog_pod_ready_after_deletion(
+            client=admin_client, model_registry_namespace=model_registry_namespace
+        )
         wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
         yield catalog_config_map
-    is_model_catalog_ready(client=admin_client, model_registry_namespace=model_registry_namespace)
+    wait_for_model_catalog_pod_ready_after_deletion(
+        client=admin_client, model_registry_namespace=model_registry_namespace
+    )
+    wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
 
 
 @pytest.fixture(scope="class")
@@ -162,7 +187,7 @@ def user_token_for_api_calls(
     user_credentials_rbac: dict[str, str],
     service_account: ServiceAccount,
     model_catalog_rest_url: list[str],
-) -> Generator[str, None, None]:
+) -> Generator[str]:
     param = getattr(request, "param", {})
     user = param.get("user_type", "admin")
     LOGGER.info("User used: %s", user)
@@ -332,27 +357,46 @@ def models_from_filter_query(
 
 
 @pytest.fixture()
-def labels_configmap_patch(admin_client: DynamicClient, model_registry_namespace: str) -> dict[str, Any]:
+def labels_configmap_patch(
+    admin_client: DynamicClient,
+    model_registry_namespace: str,
+    model_catalog_rest_url: list[str],
+    model_registry_rest_headers: dict[str, str],
+) -> Generator[dict[str, Any]]:
     # Get the editable ConfigMap
     sources_cm = ConfigMap(name=DEFAULT_CUSTOM_MODEL_CATALOG, client=admin_client, namespace=model_registry_namespace)
 
     # Parse current data and add test label
     current_data = yaml.safe_load(sources_cm.instance.data["sources.yaml"])
 
-    new_label = {
-        "name": "test-dynamic",
-        "displayName": "Dynamic Test Label",
-        "description": "A label added during test execution",
-    }
+    new_labels = [
+        {
+            "name": "test-dynamic",
+            "displayName": "Dynamic Test Label",
+            "description": "A label added during test execution",
+        },
+        {
+            "name": "mcp-test-label",
+            "assetType": "mcp_servers",
+        },
+    ]
 
     if "labels" not in current_data:
         current_data["labels"] = []
-    current_data["labels"].append(new_label)
+    current_data["labels"].extend(new_labels)
 
     patches = {"data": {"sources.yaml": yaml.dump(current_data, default_flow_style=False)}}
 
     with ResourceEditor(patches={sources_cm: patches}):
+        wait_for_model_catalog_pod_ready_after_deletion(
+            client=admin_client, model_registry_namespace=model_registry_namespace
+        )
+        wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
         yield patches
+    wait_for_model_catalog_pod_ready_after_deletion(
+        client=admin_client, model_registry_namespace=model_registry_namespace
+    )
+    wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
 
 
 @pytest.fixture()
@@ -370,10 +414,61 @@ def updated_catalog_config_map_scope_function(
     admin_client: DynamicClient,
     model_catalog_rest_url: list[str],
     model_registry_rest_headers: dict[str, str],
-) -> Generator[ConfigMap, None, None]:
+) -> Generator[ConfigMap]:
     patches = {"data": {"sources.yaml": request.param}}
     with ResourceEditor(patches={catalog_config_map: patches}):
-        is_model_catalog_ready(client=admin_client, model_registry_namespace=model_registry_namespace)
+        wait_for_model_catalog_pod_ready_after_deletion(
+            client=admin_client, model_registry_namespace=model_registry_namespace
+        )
         wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
         yield catalog_config_map
-    is_model_catalog_ready(client=admin_client, model_registry_namespace=model_registry_namespace)
+    wait_for_model_catalog_pod_ready_after_deletion(
+        client=admin_client, model_registry_namespace=model_registry_namespace
+    )
+    wait_for_model_catalog_api(url=model_catalog_rest_url[0], headers=model_registry_rest_headers)
+
+
+@pytest.fixture(scope="class")
+def catalog_config_map(admin_client: DynamicClient, model_registry_namespace: str) -> ConfigMap:
+    return ConfigMap(name=DEFAULT_CUSTOM_MODEL_CATALOG, client=admin_client, namespace=model_registry_namespace)
+
+
+@pytest.fixture(scope="class")
+def model_catalog_rest_url(model_registry_namespace: str, model_catalog_routes: list[Route]) -> list[str]:
+    assert model_catalog_routes, f"Model catalog routes does not exist in {model_registry_namespace}"
+    route_urls = [
+        f"https://{route.instance.spec.host}:443/api/model_catalog/v1alpha1/" for route in model_catalog_routes
+    ]
+    assert route_urls, (
+        "Model catalog routes information could not be found from "
+        f"routes:{[route.name for route in model_catalog_routes]}"
+    )
+    return route_urls
+
+
+@pytest.fixture(scope="function")
+def baseline_redhat_ai_models(
+    admin_client: DynamicClient,
+    model_catalog_rest_url: list[str],
+    model_registry_rest_headers: dict[str, str],
+    model_registry_namespace: str,
+) -> dict[str, set[str] | int]:
+    """
+    fixture providing baseline model data for redhat_ai_models source.
+
+    Returns:
+        Dictionary with 'api_models', 'db_models', and 'count' keys
+    """
+
+    api_response = get_models_from_catalog_api(
+        model_catalog_rest_url=model_catalog_rest_url,
+        model_registry_rest_headers=model_registry_rest_headers,
+        source_label="Red Hat AI",
+    )
+    api_models = {f"{REDHAT_AI_CATALOG_ID}:{model['name']}" for model in api_response.get("items", [])}
+
+    db_models = get_models_from_database_by_source(
+        admin_client=admin_client, source_id=REDHAT_AI_CATALOG_ID, namespace=model_registry_namespace
+    )
+
+    return {"api_models": api_models, "db_models": db_models, "count": len(api_models)}

@@ -1,7 +1,8 @@
 import os
 import subprocess
 from base64 import b64encode
-from typing import Generator, Any
+from collections.abc import Generator
+from typing import Any
 
 import pytest
 from kubernetes.dynamic import DynamicClient
@@ -24,6 +25,7 @@ def guardrails_orchestrator_ssl_cert(guardrails_orchestrator_route: Route):
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
 
         if result.returncode != 0 and "CONNECTED" not in result.stdout:
@@ -48,35 +50,61 @@ def guardrails_orchestrator_ssl_cert(guardrails_orchestrator_route: Route):
 
         return filepath
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         raise RuntimeError(f"Could not get certificate from {hostname}: {e}")
 
 
 @pytest.fixture(scope="class")
 def guardrails_orchestrator_ssl_cert_secret(
+    pytestconfig: pytest.Config,
     admin_client: DynamicClient,
     model_namespace: Namespace,
     guardrails_orchestrator_ssl_cert: str,  # ← Add dependency and use correct cert
-) -> Generator[Secret, Any, None]:
+    teardown_resources: bool,
+) -> Generator[Secret, Any]:
     with open(guardrails_orchestrator_ssl_cert, "r") as f:
         cert_content = f.read()
 
-    with Secret(
+    secret = Secret(
         client=admin_client,
         name="orch-certificate",
         namespace=model_namespace.name,
         data_dict={"orch-certificate.crt": b64encode(cert_content.encode("utf-8")).decode("utf-8")},
-    ) as secret:
+        ensure_exists=pytestconfig.option.post_upgrade,
+        teardown=teardown_resources,
+    )
+    if pytestconfig.option.post_upgrade and pytestconfig.option.teardown_resources:
         yield secret
+        secret.clean_up()
+    else:
+        with secret:
+            yield secret
 
 
 @pytest.fixture(scope="class")
-def patched_llamastack_deployment_tls_certs(llama_stack_distribution, guardrails_orchestrator_ssl_cert_secret):
+def patched_llamastack_deployment_tls_certs(
+    pytestconfig: pytest.Config,
+    llama_stack_distribution,
+    guardrails_orchestrator_ssl_cert_secret,
+):
     lls_deployment = Deployment(
         name=llama_stack_distribution.name,
         namespace=llama_stack_distribution.namespace,
         ensure_exists=True,
     )
+
+    if pytestconfig.option.post_upgrade:
+        current_spec = lls_deployment.instance.spec.template.spec.to_dict()
+        volumes = current_spec.get("volumes", [])
+        container_spec = next((c for c in current_spec.get("containers", []) if c.get("name") == "llama-stack"), {})
+        volume_mounts = container_spec.get("volumeMounts", [])
+
+        has_router_ca_volume = any(v.get("name") == "router-ca" for v in volumes)
+        has_router_ca_mount = any(vm.get("name") == "router-ca" for vm in volume_mounts)
+        if not (has_router_ca_volume and has_router_ca_mount):
+            raise ValueError("Expected existing router-ca TLS cert patch to be present in post-upgrade run")
+        yield lls_deployment
+        return
 
     current_spec = lls_deployment.instance.spec.template.spec.to_dict()
 

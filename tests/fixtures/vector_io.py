@@ -1,13 +1,15 @@
-from typing import Generator, Any, Callable, Dict
-import pytest
 import os
 import secrets
+from collections.abc import Callable, Generator
+from typing import Any
+
+import pytest
 from _pytest.fixtures import FixtureRequest
 from kubernetes.dynamic import DynamicClient
 from ocp_resources.deployment import Deployment
 from ocp_resources.namespace import Namespace
+from ocp_resources.secret import Secret
 from ocp_resources.service import Service
-
 
 MILVUS_IMAGE = os.getenv(
     "LLS_VECTOR_IO_MILVUS_IMAGE",
@@ -30,17 +32,33 @@ PGVECTOR_IMAGE = os.getenv(
 PGVECTOR_USER = os.getenv("LLS_VECTOR_IO_PGVECTOR_USER", "vector_user")
 PGVECTOR_PASSWORD = os.getenv("LLS_VECTOR_IO_PGVECTOR_PASSWORD", "yourpassword")
 
+# qdrant v1 unprivileged latest
+QDRANT_IMAGE = os.getenv(
+    "LLS_VECTOR_IO_QDRANT_IMAGE",
+    (
+        "docker.io/qdrant/qdrant@sha256:"
+        "9dfabc51ededc48158899a288a19a04de1ab54a11d8c512e1c40eebbd5e2bc92"  # pragma: allowlist secret
+    ),
+)
+
+QDRANT_API_KEY = os.getenv("LLS_VECTOR_IO_QDRANT_API_KEY", "yourapikey")
+QDRANT_URL = os.getenv("LLS_VECTOR_IO_QDRANT_URL", "http://vector-io-qdrant-service:6333")
+
 
 @pytest.fixture(scope="class")
 def vector_io_provider_deployment_config_factory(
     request: FixtureRequest,
-) -> Callable[[str], list[Dict[str, str]]]:
+) -> Callable[[str], list[dict[str, Any]]]:
     """
     Factory fixture for deploying vector I/O providers and returning their configuration.
 
     This fixture returns a factory function that can deploy different vector I/O providers
     (such as Milvus) in the cluster and return the necessary environment variables
     for configuring the LlamaStack server to use these providers.
+
+    Provider-specific dependencies (e.g., unprivileged_model_namespace, vector_io_secret)
+    are resolved lazily via request.getfixturevalue() only when a provider that requires
+    them is selected.
 
     Args:
         request: Pytest fixture request object for accessing other fixtures
@@ -66,6 +84,10 @@ def vector_io_provider_deployment_config_factory(
           * PGVECTOR_USER: Database user
           * PGVECTOR_PASSWORD: Database password
           * PGVECTOR_DB: Database name
+        - "qdrant-remote":
+          * ENABLE_QDRANT: enable qdrant provider
+          * QDRANT_API_KEY: Qdrant API key
+          * QDRANT_URL: Qdrant service URL with protocol (e.g., "http://vector-io-qdrant-service:6333")
 
     Example:
         def test_with_milvus(vector_io_provider_deployment_config_factory):
@@ -73,8 +95,8 @@ def vector_io_provider_deployment_config_factory(
             # env_vars contains MILVUS_ENDPOINT, MILVUS_TOKEN, etc.
     """
 
-    def _factory(provider_name: str) -> list[Dict[str, str]]:
-        env_vars: list[dict[str, str]] = []
+    def _factory(provider_name: str) -> list[dict[str, Any]]:
+        env_vars: list[dict[str, Any]] = []
 
         if provider_name is None or provider_name == "milvus":
             # Default case - no additional environment variables needed
@@ -82,7 +104,12 @@ def vector_io_provider_deployment_config_factory(
         elif provider_name == "milvus-remote":
             request.getfixturevalue(argname="milvus_service")
             env_vars.append({"name": "MILVUS_ENDPOINT", "value": "http://vector-io-milvus-service:19530"})
-            env_vars.append({"name": "MILVUS_TOKEN", "value": MILVUS_TOKEN})
+            env_vars.append(
+                {
+                    "name": "MILVUS_TOKEN",
+                    "valueFrom": {"secretKeyRef": {"name": "vector-io-secret", "key": "milvus-token"}},
+                },
+            )
             env_vars.append({"name": "MILVUS_CONSISTENCY_LEVEL", "value": "Bounded"})
         elif provider_name == "faiss":
             env_vars.append({"name": "ENABLE_FAISS", "value": "faiss"})
@@ -95,9 +122,27 @@ def vector_io_provider_deployment_config_factory(
             env_vars.append({"name": "ENABLE_PGVECTOR", "value": "true"})
             env_vars.append({"name": "PGVECTOR_HOST", "value": "vector-io-pgvector-service"})
             env_vars.append({"name": "PGVECTOR_PORT", "value": "5432"})
-            env_vars.append({"name": "PGVECTOR_USER", "value": PGVECTOR_USER})
-            env_vars.append({"name": "PGVECTOR_PASSWORD", "value": PGVECTOR_PASSWORD})
+            env_vars.append(
+                {
+                    "name": "PGVECTOR_USER",
+                    "valueFrom": {"secretKeyRef": {"name": "vector-io-secret", "key": "pgvector-user"}},
+                },
+            )
+            env_vars.append(
+                {
+                    "name": "PGVECTOR_PASSWORD",
+                    "valueFrom": {"secretKeyRef": {"name": "vector-io-secret", "key": "pgvector-password"}},
+                },
+            )
             env_vars.append({"name": "PGVECTOR_DB", "value": "pgvector"})
+        elif provider_name == "qdrant-remote":
+            request.getfixturevalue(argname="qdrant_service")
+            env_vars.append({"name": "ENABLE_QDRANT", "value": "true"})
+            env_vars.append({"name": "QDRANT_URL", "value": QDRANT_URL})
+            env_vars.append({
+                "name": "QDRANT_API_KEY",
+                "valueFrom": {"secretKeyRef": {"name": "vector-io-secret", "key": "qdrant-api-key"}},
+            })
 
         return env_vars
 
@@ -105,12 +150,44 @@ def vector_io_provider_deployment_config_factory(
 
 
 @pytest.fixture(scope="class")
-def etcd_deployment(
+def vector_io_secret(
+    pytestconfig: pytest.Config,
     unprivileged_client: DynamicClient,
     unprivileged_model_namespace: Namespace,
+    teardown_resources: bool,
+) -> Generator[Secret, Any, Any]:
+    """Create a secret for the vector I/O providers"""
+    secret = Secret(
+        client=unprivileged_client,
+        namespace=unprivileged_model_namespace.name,
+        name="vector-io-secret",
+        type="Opaque",
+        string_data={
+            "qdrant-api-key": QDRANT_API_KEY,
+            "pgvector-user": PGVECTOR_USER,
+            "pgvector-password": PGVECTOR_PASSWORD,
+            "milvus-token": MILVUS_TOKEN,
+        },
+        ensure_exists=pytestconfig.option.post_upgrade,
+        teardown=teardown_resources,
+    )
+    if pytestconfig.option.post_upgrade:
+        yield secret
+        secret.clean_up()
+    else:
+        with secret:
+            yield secret
+
+
+@pytest.fixture(scope="class")
+def etcd_deployment(
+    pytestconfig: pytest.Config,
+    unprivileged_client: DynamicClient,
+    unprivileged_model_namespace: Namespace,
+    teardown_resources: bool,
 ) -> Generator[Deployment, Any, Any]:
     """Deploy an etcd instance for vector I/O provider testing."""
-    with Deployment(
+    deployment = Deployment(
         client=unprivileged_client,
         namespace=unprivileged_model_namespace.name,
         name="vector-io-etcd-deployment",
@@ -118,19 +195,28 @@ def etcd_deployment(
         selector={"matchLabels": {"app": "etcd"}},
         strategy={"type": "Recreate"},
         template=get_etcd_deployment_template(),
-        teardown=True,
-    ) as deployment:
+        teardown=teardown_resources,
+        ensure_exists=pytestconfig.option.post_upgrade,
+    )
+    if pytestconfig.option.post_upgrade:
         deployment.wait_for_replicas(deployed=True, timeout=120)
         yield deployment
+        deployment.clean_up()
+    else:
+        with deployment:
+            deployment.wait_for_replicas(deployed=True, timeout=120)
+            yield deployment
 
 
 @pytest.fixture(scope="class")
 def etcd_service(
+    pytestconfig: pytest.Config,
     unprivileged_client: DynamicClient,
     unprivileged_model_namespace: Namespace,
+    teardown_resources: bool,
 ) -> Generator[Service, Any, Any]:
     """Create a service for the etcd deployment."""
-    with Service(
+    service = Service(
         client=unprivileged_client,
         namespace=unprivileged_model_namespace.name,
         name="vector-io-etcd-service",
@@ -142,19 +228,33 @@ def etcd_service(
         ],
         selector={"app": "etcd"},
         wait_for_resource=True,
-    ) as service:
+        ensure_exists=pytestconfig.option.post_upgrade,
+        teardown=teardown_resources,
+    )
+    if pytestconfig.option.post_upgrade:
         yield service
+        service.clean_up()
+    else:
+        with service:
+            yield service
 
 
 @pytest.fixture(scope="class")
 def remote_milvus_deployment(
+    pytestconfig: pytest.Config,
     unprivileged_client: DynamicClient,
     unprivileged_model_namespace: Namespace,
     etcd_deployment: Deployment,
     etcd_service: Service,
+    vector_io_secret: Secret,
+    teardown_resources: bool,
 ) -> Generator[Deployment, Any, Any]:
     """Deploy a remote Milvus instance for vector I/O provider testing."""
-    with Deployment(
+    _ = etcd_deployment
+    _ = etcd_service
+    _ = vector_io_secret
+
+    deployment = Deployment(
         client=unprivileged_client,
         namespace=unprivileged_model_namespace.name,
         name="vector-io-milvus-deployment",
@@ -163,20 +263,31 @@ def remote_milvus_deployment(
         selector={"matchLabels": {"app": "milvus-standalone"}},
         strategy={"type": "Recreate"},
         template=get_milvus_deployment_template(),
-        teardown=True,
-    ) as deployment:
+        teardown=teardown_resources,
+        ensure_exists=pytestconfig.option.post_upgrade,
+    )
+    if pytestconfig.option.post_upgrade:
         deployment.wait_for_replicas(deployed=True, timeout=240)
         yield deployment
+        deployment.clean_up()
+    else:
+        with deployment:
+            deployment.wait_for_replicas(deployed=True, timeout=240)
+            yield deployment
 
 
 @pytest.fixture(scope="class")
 def milvus_service(
+    pytestconfig: pytest.Config,
     unprivileged_client: DynamicClient,
     unprivileged_model_namespace: Namespace,
     remote_milvus_deployment: Deployment,
+    teardown_resources: bool,
 ) -> Generator[Service, Any, Any]:
     """Create a service for the remote Milvus deployment."""
-    with Service(
+    _ = remote_milvus_deployment
+
+    service = Service(
         client=unprivileged_client,
         namespace=unprivileged_model_namespace.name,
         name="vector-io-milvus-service",
@@ -189,11 +300,18 @@ def milvus_service(
         ],
         selector={"app": "milvus-standalone"},
         wait_for_resource=True,
-    ) as service:
+        ensure_exists=pytestconfig.option.post_upgrade,
+        teardown=teardown_resources,
+    )
+    if pytestconfig.option.post_upgrade:
         yield service
+        service.clean_up()
+    else:
+        with service:
+            yield service
 
 
-def get_milvus_deployment_template() -> Dict[str, Any]:
+def get_milvus_deployment_template() -> dict[str, Any]:
     """Return the Kubernetes deployment template for Milvus standalone."""
     return {
         "metadata": {"labels": {"app": "milvus-standalone"}},
@@ -228,7 +346,7 @@ def get_milvus_deployment_template() -> Dict[str, Any]:
     }
 
 
-def get_etcd_deployment_template() -> Dict[str, Any]:
+def get_etcd_deployment_template() -> dict[str, Any]:
     """Return the Kubernetes deployment template for etcd."""
     return {
         "metadata": {"labels": {"app": "etcd"}},
@@ -270,11 +388,16 @@ def get_etcd_deployment_template() -> Dict[str, Any]:
 
 @pytest.fixture(scope="class")
 def pgvector_deployment(
+    pytestconfig: pytest.Config,
     unprivileged_client: DynamicClient,
     unprivileged_model_namespace: Namespace,
+    vector_io_secret: Secret,
+    teardown_resources: bool,
 ) -> Generator[Deployment, Any, Any]:
     """Deploy a PGVector instance for vector I/O provider testing."""
-    with Deployment(
+    _ = vector_io_secret
+
+    deployment = Deployment(
         client=unprivileged_client,
         namespace=unprivileged_model_namespace.name,
         name="vector-io-pgvector-deployment",
@@ -283,20 +406,31 @@ def pgvector_deployment(
         selector={"matchLabels": {"app": "pgvector"}},
         strategy={"type": "Recreate"},
         template=get_pgvector_deployment_template(),
-        teardown=True,
-    ) as deployment:
+        teardown=teardown_resources,
+        ensure_exists=pytestconfig.option.post_upgrade,
+    )
+    if pytestconfig.option.post_upgrade:
         deployment.wait_for_replicas(deployed=True, timeout=240)
         yield deployment
+        deployment.clean_up()
+    else:
+        with deployment:
+            deployment.wait_for_replicas(deployed=True, timeout=240)
+            yield deployment
 
 
 @pytest.fixture(scope="class")
 def pgvector_service(
+    pytestconfig: pytest.Config,
     unprivileged_client: DynamicClient,
     unprivileged_model_namespace: Namespace,
     pgvector_deployment: Deployment,
+    teardown_resources: bool,
 ) -> Generator[Service, Any, Any]:
     """Create a service for the PGVector deployment."""
-    with Service(
+    _ = pgvector_deployment
+
+    service = Service(
         client=unprivileged_client,
         namespace=unprivileged_model_namespace.name,
         name="vector-io-pgvector-service",
@@ -309,11 +443,18 @@ def pgvector_service(
         ],
         selector={"app": "pgvector"},
         wait_for_resource=True,
-    ) as service:
+        ensure_exists=pytestconfig.option.post_upgrade,
+        teardown=teardown_resources,
+    )
+    if pytestconfig.option.post_upgrade:
         yield service
+        service.clean_up()
+    else:
+        with service:
+            yield service
 
 
-def get_pgvector_deployment_template() -> Dict[str, Any]:
+def get_pgvector_deployment_template() -> dict[str, Any]:
     """Return a Kubernetes deployment for PGVector"""
     return {
         "metadata": {"labels": {"app": "pgvector"}},
@@ -325,8 +466,14 @@ def get_pgvector_deployment_template() -> Dict[str, Any]:
                     "ports": [{"containerPort": 5432}],
                     "env": [
                         {"name": "POSTGRES_DB", "value": "pgvector"},
-                        {"name": "POSTGRES_USER", "value": PGVECTOR_USER},
-                        {"name": "POSTGRES_PASSWORD", "value": PGVECTOR_PASSWORD},
+                        {
+                            "name": "POSTGRES_USER",
+                            "valueFrom": {"secretKeyRef": {"name": "vector-io-secret", "key": "pgvector-user"}},
+                        },
+                        {
+                            "name": "POSTGRES_PASSWORD",
+                            "valueFrom": {"secretKeyRef": {"name": "vector-io-secret", "key": "pgvector-password"}},
+                        },
                         {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
                     ],
                     "lifecycle": {
@@ -348,5 +495,123 @@ def get_pgvector_deployment_template() -> Dict[str, Any]:
                 }
             ],
             "volumes": [{"name": "pgdata", "emptyDir": {}}],
+        },
+    }
+
+
+@pytest.fixture(scope="class")
+def qdrant_deployment(
+    pytestconfig: pytest.Config,
+    unprivileged_client: DynamicClient,
+    unprivileged_model_namespace: Namespace,
+    vector_io_secret: Secret,
+    teardown_resources: bool,
+) -> Generator[Deployment, Any, Any]:
+    """Deploy a Qdrant instance for vector I/O provider testing."""
+    _ = vector_io_secret
+
+    deployment = Deployment(
+        client=unprivileged_client,
+        namespace=unprivileged_model_namespace.name,
+        name="vector-io-qdrant-deployment",
+        min_ready_seconds=5,
+        replicas=1,
+        selector={"matchLabels": {"app": "qdrant"}},
+        strategy={"type": "Recreate"},
+        template=get_qdrant_deployment_template(),
+        teardown=teardown_resources,
+        ensure_exists=pytestconfig.option.post_upgrade,
+    )
+    if pytestconfig.option.post_upgrade:
+        deployment.wait_for_replicas(deployed=True, timeout=240)
+        yield deployment
+        deployment.clean_up()
+    else:
+        with deployment:
+            deployment.wait_for_replicas(deployed=True, timeout=240)
+            yield deployment
+
+
+@pytest.fixture(scope="class")
+def qdrant_service(
+    pytestconfig: pytest.Config,
+    unprivileged_client: DynamicClient,
+    unprivileged_model_namespace: Namespace,
+    qdrant_deployment: Deployment,
+    teardown_resources: bool,
+) -> Generator[Service, Any, Any]:
+    """Create a service for the Qdrant deployment."""
+    _ = qdrant_deployment
+
+    service = Service(
+        client=unprivileged_client,
+        namespace=unprivileged_model_namespace.name,
+        name="vector-io-qdrant-service",
+        ports=[
+            {
+                "name": "http",
+                "port": 6333,
+                "targetPort": 6333,
+            },
+            {
+                "name": "grpc",
+                "port": 6334,
+                "targetPort": 6334,
+            },
+        ],
+        selector={"app": "qdrant"},
+        wait_for_resource=True,
+        ensure_exists=pytestconfig.option.post_upgrade,
+        teardown=teardown_resources,
+    )
+    if pytestconfig.option.post_upgrade:
+        yield service
+        service.clean_up()
+    else:
+        with service:
+            yield service
+
+
+def get_qdrant_deployment_template() -> dict[str, Any]:
+    """Return a Kubernetes deployment for Qdrant"""
+    return {
+        "metadata": {"labels": {"app": "qdrant"}},
+        "spec": {
+            "containers": [
+                {
+                    "name": "qdrant",
+                    "image": QDRANT_IMAGE,
+                    "ports": [
+                        {
+                            "containerPort": 6333,
+                            "name": "http",
+                        },
+                        {
+                            "containerPort": 6334,
+                            "name": "grpc",
+                        },
+                    ],
+                    "env": [
+                        {
+                            "name": "QDRANT__SERVICE__API_KEY",
+                            "valueFrom": {
+                                "secretKeyRef": {
+                                    "name": "vector-io-secret",
+                                    "key": "qdrant-api-key",
+                                },
+                            },
+                        },
+                    ],
+                    "volumeMounts": [
+                        {"name": "qdrant-storage", "mountPath": "/qdrant/storage"},
+                        {
+                            "name": "qdrant-storage",
+                            "mountPath": "/qdrant/snapshots",
+                            "subPath": "snapshots",
+                        },
+                    ],
+                },
+            ],
+            "volumes": [{"name": "qdrant-storage", "emptyDir": {}}],
         },
     }

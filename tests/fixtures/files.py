@@ -1,6 +1,7 @@
-from typing import Callable, Dict
-import pytest
 import os
+from collections.abc import Callable
+
+import pytest
 from _pytest.fixtures import FixtureRequest
 
 S3_AUTO_CREATE_BUCKET = os.getenv("LLS_FILES_S3_AUTO_CREATE_BUCKET", "true")
@@ -9,7 +10,7 @@ S3_AUTO_CREATE_BUCKET = os.getenv("LLS_FILES_S3_AUTO_CREATE_BUCKET", "true")
 @pytest.fixture(scope="class")
 def files_provider_config_factory(
     request: FixtureRequest,
-) -> Callable[[str], list[Dict[str, str]]]:
+) -> Callable[[str], list[dict[str, str]]]:
     """
     Factory fixture for configuring external files providers and returning their configuration.
 
@@ -44,7 +45,7 @@ def files_provider_config_factory(
             # env_vars contains S3_BUCKET_NAME, S3_BUCKET_ENDPOINT_URL, etc.
     """
 
-    def _factory(provider_name: str) -> list[Dict[str, str]]:
+    def _factory(provider_name: str) -> list[dict[str, str]]:
         env_vars: list[dict[str, str]] = []
 
         if provider_name == "local" or provider_name is None:
@@ -63,11 +64,13 @@ def files_provider_config_factory(
             })
             env_vars.append({
                 "name": "AWS_ACCESS_KEY_ID",
-                "value": request.getfixturevalue(argname="aws_access_key_id"),
+                "valueFrom": {"secretKeyRef": {"name": "llamastack-distribution-secret", "key": "aws-access-key-id"}},
             })
             env_vars.append({
                 "name": "AWS_SECRET_ACCESS_KEY",
-                "value": request.getfixturevalue(argname="aws_secret_access_key"),
+                "valueFrom": {
+                    "secretKeyRef": {"name": "llamastack-distribution-secret", "key": "aws-secret-access-key"}
+                },
             })
             env_vars.append({"name": "S3_AUTO_CREATE_BUCKET", "value": S3_AUTO_CREATE_BUCKET})
 
