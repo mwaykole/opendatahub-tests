@@ -2,7 +2,9 @@ import base64
 import os
 import shutil
 from ast import literal_eval
-from typing import Any, Callable, Generator
+from collections.abc import Callable, Generator
+from contextlib import ExitStack
+from typing import Any
 
 import pytest
 from semver import Version
@@ -656,7 +658,6 @@ def oc_binary_path(bin_directory: LocalPath) -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-@pytest.mark.early(order=0)
 def autouse_fixtures(
     bin_directory_to_os_path: None,
     cluster_sanity_scope_session: None,
@@ -713,11 +714,23 @@ def mariadb_operator_cr(
         raise ResourceNotFoundError(f"No MariadbOperator dict found in alm_examples for CSV {mariadb_csv.name}")
 
     mariadb_operator_cr_dict["metadata"]["namespace"] = OPENSHIFT_OPERATORS
-    with MariadbOperator(kind_dict=mariadb_operator_cr_dict) as mariadb_operator_cr:
+    mariadb_operator_cr_name = mariadb_operator_cr_dict["metadata"]["name"]
+
+    mariadb_operator_cr = MariadbOperator(
+        client=admin_client,
+        name=mariadb_operator_cr_name,
+        namespace=OPENSHIFT_OPERATORS,
+    )
+
+    with ExitStack() as stack:
+        if not mariadb_operator_cr.exists:
+            mariadb_operator_cr = stack.enter_context(cm=MariadbOperator(kind_dict=mariadb_operator_cr_dict))
+
         mariadb_operator_cr.wait_for_condition(
             condition="Deployed", status=mariadb_operator_cr.Condition.Status.TRUE, timeout=Timeout.TIMEOUT_10MIN
         )
-        wait_for_mariadb_operator_deployments(mariadb_operator=mariadb_operator_cr)
+        wait_for_mariadb_operator_deployments(mariadb_operator=mariadb_operator_cr, client=admin_client)
+
         yield mariadb_operator_cr
 
 
