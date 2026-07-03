@@ -30,7 +30,7 @@ from ocp_resources.namespace import Namespace
 from ocp_resources.secret import Secret
 from ocp_resources.serving_runtime import ServingRuntime
 from pytest_testconfig import config as py_config
-from timeout_sampler import TimeoutSampler
+from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
 from tests.model_serving.model_server.kserve.negative.utils import (
     assert_kserve_control_plane_stable,
@@ -123,11 +123,11 @@ def _create_and_immediately_delete_bad_isvc(
                     name=isvc_name,
                 )
                 return
-    except Exception:
+    except TimeoutExpiredError as err:
         raise AssertionError(
             f"ISVC '{isvc_name}' was not removed from the API server within "
             f"{Timeout.TIMEOUT_2MIN}s after deletion (cycle {cycle_index})"
-        )
+        ) from err
 
 
 @pytest.mark.tier3
