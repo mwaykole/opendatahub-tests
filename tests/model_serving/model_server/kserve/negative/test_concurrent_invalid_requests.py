@@ -5,7 +5,7 @@ Boundary condition: sending a burst of malformed/invalid requests concurrently
 stresses the server's error-handling path without any valid traffic.  The goals
 are:
 
-1. Every concurrent request receives a 4xx (client-error) response – the server
+1. Every concurrent request receives a 4xx (client-error) response - the server
    must not silently swallow errors or return 5xx when the input is invalid.
 2. The predictor pod set remains identical (no pod restarts or evictions).
 3. The KServe control plane (kserve-controller-manager, odh-model-controller)
@@ -35,13 +35,16 @@ from tests.model_serving.model_server.kserve.negative.utils import (
 
 pytestmark = pytest.mark.usefixtures("valid_aws_config")
 
-# Acceptable error codes for malformed concurrent requests
+# Acceptable error codes for malformed concurrent requests.
+# Only 4xx client-error responses are valid - the server must not return 5xx
+# (including 503 SERVICE_UNAVAILABLE) for invalid/malformed input; a 5xx
+# response would indicate a server-side failure that should surface as a
+# test failure, not be silently accepted.
 CONCURRENT_INVALID_EXPECTED_CODES: set[int] = {
     HTTPStatus.BAD_REQUEST,  # 400
     HTTPStatus.PRECONDITION_FAILED,  # 412
     HTTPStatus.UNPROCESSABLE_ENTITY,  # 422
-    HTTPStatus.TOO_MANY_REQUESTS,  # 429 – if the server rate-limits the burst
-    HTTPStatus.SERVICE_UNAVAILABLE,  # 503 – transient overload acceptable
+    HTTPStatus.TOO_MANY_REQUESTS,  # 429 - if the server rate-limits the burst
 }
 
 # A deliberately malformed body shared across all concurrent requests
@@ -85,7 +88,7 @@ class TestConcurrentInvalidRequests:
 
         for idx, (status_code, response_body) in enumerate(results):
             assert status_code in CONCURRENT_INVALID_EXPECTED_CODES, (
-                f"Request #{idx + 1}: expected 4xx/503 for concurrent malformed JSON, "
+                f"Request #{idx + 1}: expected 4xx for concurrent malformed JSON, "
                 f"got {status_code}. Response: {response_body}"
             )
 

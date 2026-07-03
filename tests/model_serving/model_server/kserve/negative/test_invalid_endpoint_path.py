@@ -93,11 +93,11 @@ class TestInvalidEndpointPath:
         )
 
         assert status_code in INVALID_PATH_EXPECTED_CODES, (
-            f"Expected 4xx for model_name={model_name!r[:60]}…, "
+            f"Expected 4xx for model_name={model_name!r:.60}..., "
             f"got {status_code}. Response (first 200 chars): {response_body[:200]}"
         )
         assert status_code not in {200, 201, 202, 204}, (
-            f"Server returned 2xx ({status_code}) for potentially dangerous path: {model_name!r[:60]}"
+            f"Server returned 2xx ({status_code}) for potentially dangerous path: {model_name!r:.60}"
         )
 
     def test_pod_healthy_after_invalid_path_requests(
