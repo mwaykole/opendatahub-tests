@@ -40,9 +40,9 @@ VALID_BODY_RAW: str = json.dumps(VALID_OVMS_INFERENCE_BODY)
 
 # Acceptable status codes for invalid path segments
 INVALID_PATH_EXPECTED_CODES: set[int] = {
-    HTTPStatus.NOT_FOUND,      # 404 – path does not match a valid model
-    HTTPStatus.BAD_REQUEST,    # 400 – server rejects the malformed request line
-    HTTPStatus.FORBIDDEN,      # 403 – proxy/firewall blocks path traversal
+    HTTPStatus.NOT_FOUND,  # 404 – path does not match a valid model
+    HTTPStatus.BAD_REQUEST,  # 400 – server rejects the malformed request line
+    HTTPStatus.FORBIDDEN,  # 403 – proxy/firewall blocks path traversal
     HTTPStatus.REQUEST_URI_TOO_LONG,  # 414 – URI exceeds server limit
 }
 
