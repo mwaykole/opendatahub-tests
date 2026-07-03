@@ -1,6 +1,7 @@
 """Utility functions for negative inference tests."""
 
 import shlex
+import threading
 from typing import Any
 
 import structlog
@@ -303,3 +304,101 @@ def send_inference_request(
     except ValueError as exc:
         raise ValueError(f"Could not parse HTTP status code from curl output: {out!r}") from exc
     return status_code, "\n".join(lines[:-1])
+
+
+def send_inference_request_with_method(
+    inference_service: InferenceService,
+    http_method: str,
+    body: str = "",
+    model_name: str | None = None,
+    content_type: str = "application/json",
+) -> tuple[int, str]:
+    """Send an inference request with a custom HTTP method and return the status code and body.
+
+    This is used for negative testing to verify that unsupported HTTP methods
+    (e.g., GET, PUT, DELETE, PATCH) are rejected with an appropriate 4xx error.
+
+    Args:
+        inference_service: The InferenceService to send the request to.
+        http_method: The HTTP method to use (e.g., "GET", "PUT", "DELETE", "PATCH").
+        body: The raw string payload. Defaults to empty string.
+        model_name: Override the model name in the URL path.
+            Defaults to the InferenceService name.
+        content_type: The Content-Type header value. Defaults to "application/json".
+
+    Returns:
+        A tuple of (status_code, response_body).
+
+    Raises:
+        ValueError: If the InferenceService has no URL or curl output is malformed.
+    """
+    base_url = inference_service.instance.status.url
+    if not base_url:
+        raise ValueError(f"InferenceService '{inference_service.name}' has no URL; is it Ready?")
+
+    target_model = model_name or inference_service.name
+    endpoint = f"{base_url}/v2/models/{target_model}/infer"
+
+    body_flag = f"--data-raw {shlex.quote(body)}" if body else "--data-raw ''"
+
+    cmd = (
+        f"curl -s -w '\\n%{{http_code}}' "
+        f"-X {http_method} {endpoint} "
+        f"-H 'Content-Type: {content_type}' "
+        f"{body_flag} "
+        f"--insecure"
+    )
+
+    _, out, _ = run_command(command=shlex.split(cmd), verify_stderr=False, check=False)
+
+    lines = out.strip().split("\n")
+    try:
+        status_code = int(lines[-1])
+    except ValueError as exc:
+        raise ValueError(f"Could not parse HTTP status code from curl output: {out!r}") from exc
+    return status_code, "\n".join(lines[:-1])
+
+
+def send_inference_requests_concurrently(
+    inference_service: InferenceService,
+    body: str,
+    count: int,
+    model_name: str | None = None,
+    content_type: str = "application/json",
+) -> list[tuple[int, str]]:
+    """Send ``count`` inference requests concurrently using threads.
+
+    All requests share the same payload and target.  Results are collected
+    thread-safely and returned in the order threads complete (not the order
+    they were started).
+
+    Args:
+        inference_service: The InferenceService to target.
+        body: The raw string payload for every request.
+        count: Number of concurrent requests to send.
+        model_name: Override the model name in the URL path.
+        content_type: The Content-Type header for every request.
+
+    Returns:
+        A list of (status_code, response_body) tuples, one per request.
+    """
+    results: list[tuple[int, str]] = []
+    lock = threading.Lock()
+
+    def _worker() -> None:
+        result = send_inference_request(
+            inference_service=inference_service,
+            body=body,
+            model_name=model_name,
+            content_type=content_type,
+        )
+        with lock:
+            results.append(result)
+
+    threads = [threading.Thread(target=_worker) for _ in range(count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    return results

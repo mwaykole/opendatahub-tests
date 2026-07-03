@@ -11,3 +11,15 @@ KSERVE_CONTROL_PLANE_DEPLOYMENTS: tuple[str, ...] = (
     "kserve-controller-manager",
     "odh-model-controller",
 )
+
+# Boundary / edge-case constants
+# Oversized payload: 6 MB of 'A' characters (exceeds typical 4 MB server limits)
+OVERSIZED_PAYLOAD_SIZE_BYTES: int = 6 * 1024 * 1024
+OVERSIZED_PAYLOAD_BODY: str = "A" * OVERSIZED_PAYLOAD_SIZE_BYTES
+
+# Model name boundary cases
+VERY_LONG_MODEL_NAME: str = "a" * 253  # exceeds Kubernetes name limit (253 chars)
+MODEL_NAME_WITH_SPECIAL_CHARS: str = "../../etc/passwd"
+
+# Concurrent requests boundary
+CONCURRENT_INVALID_REQUEST_COUNT: int = 10
