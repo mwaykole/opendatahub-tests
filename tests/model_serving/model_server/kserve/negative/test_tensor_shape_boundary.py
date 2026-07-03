@@ -34,10 +34,10 @@ from tests.model_serving.model_server.kserve.negative.utils import (
 pytestmark = pytest.mark.usefixtures("valid_aws_config")
 
 TENSOR_ERROR_EXPECTED_CODES: set[int] = {
-    HTTPStatus.BAD_REQUEST,           # 400
-    HTTPStatus.PRECONDITION_FAILED,   # 412 – OVMS uses this for shape errors
+    HTTPStatus.BAD_REQUEST,  # 400
+    HTTPStatus.PRECONDITION_FAILED,  # 412 – OVMS uses this for shape errors
     HTTPStatus.UNPROCESSABLE_ENTITY,  # 422
-    HTTPStatus.INTERNAL_SERVER_ERROR, # 500 – some runtimes surface shape errors as 500
+    HTTPStatus.INTERNAL_SERVER_ERROR,  # 500 – some runtimes surface shape errors as 500
 }
 
 
@@ -86,10 +86,7 @@ class TestTensorShapeBoundary:
 
     @pytest.mark.parametrize(
         "shape,data,description",
-        [
-            pytest.param(shape, data, desc, id=desc)
-            for shape, data, desc in _BOUNDARY_CASES
-        ],
+        [pytest.param(shape, data, desc, id=desc) for shape, data, desc in _BOUNDARY_CASES],
     )
     def test_boundary_shape_returns_error(
         self,
@@ -116,8 +113,7 @@ class TestTensorShapeBoundary:
             f"got {status_code}. Response: {response_body}"
         )
         assert status_code in TENSOR_ERROR_EXPECTED_CODES, (
-            f"Unexpected status code {status_code} for {description} (shape={shape}). "
-            f"Response: {response_body}"
+            f"Unexpected status code {status_code} for {description} (shape={shape}). Response: {response_body}"
         )
 
     def test_pod_remains_healthy_after_boundary_shape_requests(
@@ -171,6 +167,5 @@ class TestTensorShapeBoundary:
         )
 
         assert status_code == HTTPStatus.OK, (
-            f"Valid inference request returned {status_code} after boundary-shape requests. "
-            f"Response: {response_body}"
+            f"Valid inference request returned {status_code} after boundary-shape requests. Response: {response_body}"
         )

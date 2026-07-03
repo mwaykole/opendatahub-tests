@@ -37,10 +37,10 @@ pytestmark = pytest.mark.usefixtures("valid_aws_config")
 
 # Acceptable error codes for malformed concurrent requests
 CONCURRENT_INVALID_EXPECTED_CODES: set[int] = {
-    HTTPStatus.BAD_REQUEST,          # 400
+    HTTPStatus.BAD_REQUEST,  # 400
     HTTPStatus.PRECONDITION_FAILED,  # 412
-    HTTPStatus.UNPROCESSABLE_ENTITY, # 422
-    HTTPStatus.TOO_MANY_REQUESTS,    # 429 – if the server rate-limits the burst
+    HTTPStatus.UNPROCESSABLE_ENTITY,  # 422
+    HTTPStatus.TOO_MANY_REQUESTS,  # 429 – if the server rate-limits the burst
     HTTPStatus.SERVICE_UNAVAILABLE,  # 503 – transient overload acceptable
 }
 
@@ -173,8 +173,7 @@ class TestConcurrentInvalidRequests:
         )
 
         assert status_code == HTTPStatus.OK, (
-            f"Valid request after concurrent invalid burst returned {status_code}. "
-            f"Response: {response_body}"
+            f"Valid request after concurrent invalid burst returned {status_code}. Response: {response_body}"
         )
         parsed = json.loads(response_body)
         assert parsed.get("outputs"), (

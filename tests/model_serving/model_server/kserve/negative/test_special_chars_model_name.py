@@ -43,13 +43,13 @@ _SPECIAL_MODEL_NAMES: list[tuple[str, str]] = [
 
 # Acceptable response codes for all invalid model names
 _EXPECTED_REJECTION_CODES: set[int] = {
-    HTTPStatus.NOT_FOUND,             # 404 — model not found (most common)
-    HTTPStatus.BAD_REQUEST,           # 400 — request rejected before routing
-    HTTPStatus.FORBIDDEN,             # 403 — path traversal blocked at gateway
+    HTTPStatus.NOT_FOUND,  # 404 — model not found (most common)
+    HTTPStatus.BAD_REQUEST,  # 400 — request rejected before routing
+    HTTPStatus.FORBIDDEN,  # 403 — path traversal blocked at gateway
     HTTPStatus.UNPROCESSABLE_ENTITY,  # 422 — invalid model name format
-    HTTPStatus.METHOD_NOT_ALLOWED,    # 405 — method not allowed on the path
-    HTTPStatus.INTERNAL_SERVER_ERROR, # 500 — should NOT happen but captured for visibility
-    HTTPStatus.NOT_IMPLEMENTED,       # 501 — not implemented
+    HTTPStatus.METHOD_NOT_ALLOWED,  # 405 — method not allowed on the path
+    HTTPStatus.INTERNAL_SERVER_ERROR,  # 500 — should NOT happen but captured for visibility
+    HTTPStatus.NOT_IMPLEMENTED,  # 501 — not implemented
 }
 
 
@@ -83,10 +83,7 @@ class TestSpecialCharsModelName:
 
     @pytest.mark.parametrize(
         ("model_name", "test_id"),
-        [
-            pytest.param(name, test_id, id=test_id)
-            for name, test_id in _SPECIAL_MODEL_NAMES
-        ],
+        [pytest.param(name, test_id, id=test_id) for name, test_id in _SPECIAL_MODEL_NAMES],
     )
     def test_special_model_name_returns_4xx(
         self,
@@ -108,9 +105,7 @@ class TestSpecialCharsModelName:
         )
 
         # The response should not succeed as if the path traversal worked
-        assert status_code != HTTPStatus.OK or (
-            "root:" not in response_body and "/bin/bash" not in response_body
-        ), (
+        assert status_code != HTTPStatus.OK or ("root:" not in response_body and "/bin/bash" not in response_body), (
             f"[{test_id}] Potential path traversal: got HTTP 200 with suspicious content. "
             f"Response: {response_body[:500]}"
         )

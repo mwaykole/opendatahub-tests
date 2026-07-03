@@ -34,10 +34,10 @@ VALID_BODY_RAW: str = json.dumps(VALID_OVMS_INFERENCE_BODY)
 
 # Expected error codes for path-level mistakes
 PATH_ERROR_EXPECTED_CODES: set[int] = {
-    HTTPStatus.BAD_REQUEST,   # 400
-    HTTPStatus.NOT_FOUND,     # 404 – most common for unknown paths
+    HTTPStatus.BAD_REQUEST,  # 400
+    HTTPStatus.NOT_FOUND,  # 404 – most common for unknown paths
     HTTPStatus.METHOD_NOT_ALLOWED,  # 405 – POST to GET-only endpoint
-    HTTPStatus.GONE,          # 410 – deprecated endpoint
+    HTTPStatus.GONE,  # 410 – deprecated endpoint
     HTTPStatus.NOT_IMPLEMENTED,  # 501
 }
 
@@ -124,12 +124,10 @@ class TestInvalidInferenceEndpointPath:
         )
 
         assert status_code != HTTPStatus.OK, (
-            f"Expected a non-200 response for unknown API version path, "
-            f"got {status_code}. Response: {response_body}"
+            f"Expected a non-200 response for unknown API version path, got {status_code}. Response: {response_body}"
         )
         assert status_code in PATH_ERROR_EXPECTED_CODES, (
-            f"Unexpected status code {status_code} for unknown API version path. "
-            f"Response: {response_body}"
+            f"Unexpected status code {status_code} for unknown API version path. Response: {response_body}"
         )
 
     def test_empty_model_name_segment_returns_error(
@@ -155,8 +153,7 @@ class TestInvalidInferenceEndpointPath:
         )
 
         assert status_code != HTTPStatus.OK, (
-            f"Expected a non-200 response for empty model name segment, "
-            f"got {status_code}. Response: {response_body}"
+            f"Expected a non-200 response for empty model name segment, got {status_code}. Response: {response_body}"
         )
 
     def test_completely_unknown_path_returns_error(
@@ -218,8 +215,7 @@ class TestInvalidInferenceEndpointPath:
         )
 
         assert status_code != HTTPStatus.OK, (
-            f"Expected a non-200 response for {description} ({path}), "
-            f"got {status_code}. Response: {response_body}"
+            f"Expected a non-200 response for {description} ({path}), got {status_code}. Response: {response_body}"
         )
 
     def test_pod_remains_healthy_after_invalid_path_requests(

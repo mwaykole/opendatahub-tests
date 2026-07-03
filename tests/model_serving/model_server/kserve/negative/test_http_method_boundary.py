@@ -130,8 +130,7 @@ class TestHttpMethodBoundary:
         )
 
         assert status_code not in range(200, 300), (
-            f"Expected an error for HTTP {http_method}, got {status_code}. "
-            f"Response: {response_body}"
+            f"Expected an error for HTTP {http_method}, got {status_code}. Response: {response_body}"
         )
         assert status_code in HTTP_METHOD_EXPECTED_ERROR_CODES, (
             f"Expected one of {[c.value for c in HTTP_METHOD_EXPECTED_ERROR_CODES]} "

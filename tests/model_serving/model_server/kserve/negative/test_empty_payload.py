@@ -61,7 +61,11 @@ class TestEmptyAndNullPayloads:
             pytest.param("", "completely_empty_body", id="completely_empty_body"),
             pytest.param("   \n  ", "whitespace_only", id="whitespace_only"),
             pytest.param("null", "json_null_literal", id="json_null_literal"),
-            pytest.param(json.dumps([{"name": "Input3", "shape": [1, 1, 28, 28]}]), "json_array_top_level", id="json_array_top_level"),
+            pytest.param(
+                json.dumps([{"name": "Input3", "shape": [1, 1, 28, 28]}]),
+                "json_array_top_level",
+                id="json_array_top_level",
+            ),
         ],
     )
     def test_empty_or_null_payload_returns_error(
@@ -82,8 +86,7 @@ class TestEmptyAndNullPayloads:
         )
 
         assert status_code not in range(200, 300), (
-            f"Expected a 4xx error for '{payload_id}' payload, got {status_code}. "
-            f"Response: {response_body}"
+            f"Expected a 4xx error for '{payload_id}' payload, got {status_code}. Response: {response_body}"
         )
         assert status_code in EMPTY_PAYLOAD_EXPECTED_CODES, (
             f"Expected one of {[c.value for c in EMPTY_PAYLOAD_EXPECTED_CODES]} for '{payload_id}' "

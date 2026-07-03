@@ -32,16 +32,12 @@ from ocp_resources.serving_runtime import ServingRuntime
 from pytest_testconfig import config as py_config
 from timeout_sampler import TimeoutSampler
 
-from tests.model_serving.model_server.kserve.negative.constants import INVALID_S3_ACCESS_KEY, INVALID_S3_SIGNING_KEY
 from tests.model_serving.model_server.kserve.negative.utils import (
     assert_kserve_control_plane_stable,
     snapshot_kserve_control_plane_restart_totals,
 )
 from utilities.constants import KServeDeploymentType, Timeout
 from utilities.inference_utils import create_isvc
-from utilities.infra import s3_endpoint_secret
-from utilities.serving_runtime import ServingRuntimeFromTemplate
-from utilities.constants import RuntimeTemplates
 
 LOGGER = structlog.get_logger(name=__name__)
 
@@ -222,9 +218,7 @@ class TestRapidIsvcCreateDelete:
         storage_path = urlparse(f"s3://{ci_s3_bucket_name}/test-dir/").path
         supported_formats = ovms_serving_runtime.instance.spec.supportedModelFormats
         if not supported_formats:
-            raise ValueError(
-                f"ServingRuntime '{ovms_serving_runtime.name}' has no supportedModelFormats"
-            )
+            raise ValueError(f"ServingRuntime '{ovms_serving_runtime.name}' has no supportedModelFormats")
 
         with create_isvc(
             client=admin_client,

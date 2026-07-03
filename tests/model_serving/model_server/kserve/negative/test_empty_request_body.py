@@ -45,10 +45,10 @@ EMPTY_INPUTS_ARRAY_BODY: str = json.dumps({"inputs": []})
 # Acceptable codes: 400 Bad Request, 412 Precondition Failed, 415 Unsupported Media Type,
 # 411 Length Required (if server rejects no Content-Length)
 _EMPTY_BODY_EXPECTED_CODES: set[int] = {
-    HTTPStatus.BAD_REQUEST,           # 400
-    HTTPStatus.PRECONDITION_FAILED,   # 412
+    HTTPStatus.BAD_REQUEST,  # 400
+    HTTPStatus.PRECONDITION_FAILED,  # 412
     HTTPStatus.UNSUPPORTED_MEDIA_TYPE,  # 415
-    HTTPStatus.LENGTH_REQUIRED,       # 411
+    HTTPStatus.LENGTH_REQUIRED,  # 411
     HTTPStatus.UNPROCESSABLE_ENTITY,  # 422
 }
 
@@ -107,8 +107,7 @@ class TestEmptyRequestBody:
         )
 
         assert status_code in _EMPTY_BODY_EXPECTED_CODES, (
-            f"[{case_id}] Expected 4xx for empty/near-empty body, "
-            f"got {status_code}. Response: {response_body}"
+            f"[{case_id}] Expected 4xx for empty/near-empty body, got {status_code}. Response: {response_body}"
         )
 
     def test_pod_remains_healthy_after_empty_body_requests(

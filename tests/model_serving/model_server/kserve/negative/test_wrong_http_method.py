@@ -34,8 +34,8 @@ VALID_BODY_RAW: str = json.dumps(VALID_OVMS_INFERENCE_BODY)
 # proxy configuration – both are acceptable error responses.
 WRONG_METHOD_EXPECTED_CODES: set[int] = {
     HTTPStatus.METHOD_NOT_ALLOWED,  # 405 – canonical "wrong method"
-    HTTPStatus.NOT_FOUND,           # 404 – some proxies return this when route is method-scoped
-    HTTPStatus.BAD_REQUEST,         # 400 – permissive proxies that inspect body first
+    HTTPStatus.NOT_FOUND,  # 404 – some proxies return this when route is method-scoped
+    HTTPStatus.BAD_REQUEST,  # 400 – permissive proxies that inspect body first
 }
 
 
@@ -80,8 +80,7 @@ class TestWrongHttpMethod:
         )
 
         assert status_code in WRONG_METHOD_EXPECTED_CODES, (
-            f"Expected a 4xx client error for HTTP {http_method}, "
-            f"got {status_code}. Response: {response_body}"
+            f"Expected a 4xx client error for HTTP {http_method}, got {status_code}. Response: {response_body}"
         )
 
     def test_model_pod_remains_healthy_after_wrong_method_requests(

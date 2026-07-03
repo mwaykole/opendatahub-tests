@@ -35,9 +35,9 @@ pytestmark = pytest.mark.usefixtures("valid_aws_config")
 #   503 – upstream refuses the connection when body is too large
 OVERSIZED_PAYLOAD_EXPECTED_CODES: set[int] = {
     HTTPStatus.REQUEST_ENTITY_TOO_LARGE,  # 413
-    HTTPStatus.BAD_REQUEST,               # 400
-    HTTPStatus.REQUEST_TIMEOUT,           # 408
-    HTTPStatus.SERVICE_UNAVAILABLE,       # 503
+    HTTPStatus.BAD_REQUEST,  # 400
+    HTTPStatus.REQUEST_TIMEOUT,  # 408
+    HTTPStatus.SERVICE_UNAVAILABLE,  # 503
 }
 
 

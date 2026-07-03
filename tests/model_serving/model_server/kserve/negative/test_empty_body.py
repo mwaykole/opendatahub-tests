@@ -31,10 +31,10 @@ pytestmark = pytest.mark.usefixtures("valid_aws_config")
 # Both 400 (Bad Request) and 412 (Precondition Failed) are acceptable for empty
 # bodies; OVMS often returns 412 when it cannot parse the body as KServe v2 JSON.
 EMPTY_BODY_EXPECTED_CODES: set[int] = {
-    HTTPStatus.BAD_REQUEST,          # 400
+    HTTPStatus.BAD_REQUEST,  # 400
     HTTPStatus.PRECONDITION_FAILED,  # 412
-    HTTPStatus.LENGTH_REQUIRED,      # 411 – some proxies require Content-Length > 0
-    HTTPStatus.UNPROCESSABLE_ENTITY, # 422
+    HTTPStatus.LENGTH_REQUIRED,  # 411 – some proxies require Content-Length > 0
+    HTTPStatus.UNPROCESSABLE_ENTITY,  # 422
 }
 
 
@@ -76,8 +76,7 @@ class TestEmptyBody:
         )
 
         assert status_code in EMPTY_BODY_EXPECTED_CODES, (
-            f"Expected 400/411/412/422 for empty/whitespace body {body!r}, "
-            f"got {status_code}. Response: {response_body}"
+            f"Expected 400/411/412/422 for empty/whitespace body {body!r}, got {status_code}. Response: {response_body}"
         )
 
     def test_model_pod_remains_healthy_after_empty_body_request(

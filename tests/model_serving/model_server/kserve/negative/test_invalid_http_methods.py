@@ -53,12 +53,7 @@ def send_request_with_method(
     if body is not None:
         body_arg = f"--data-raw {shlex.quote(body)} -H 'Content-Type: application/json'"
 
-    cmd = (
-        f"curl -s -w '\\n%{{http_code}}' "
-        f"-X {method} {endpoint} "
-        f"{body_arg} "
-        f"--insecure"
-    )
+    cmd = f"curl -s -w '\\n%{{http_code}}' -X {method} {endpoint} {body_arg} --insecure"
 
     _, out, _ = run_command(command=shlex.split(cmd), verify_stderr=False, check=False)
 
@@ -75,10 +70,10 @@ _INVALID_METHODS: list[str] = ["GET", "PUT", "DELETE", "PATCH"]
 
 # Acceptable rejection codes for invalid HTTP methods
 _METHOD_NOT_ALLOWED_CODES: set[int] = {
-    HTTPStatus.METHOD_NOT_ALLOWED,   # 405 — canonical response
-    HTTPStatus.NOT_FOUND,            # 404 — some routers return this for no matching route
-    HTTPStatus.BAD_REQUEST,          # 400 — some runtimes return this
-    HTTPStatus.FORBIDDEN,            # 403 — gateway-level rejection
+    HTTPStatus.METHOD_NOT_ALLOWED,  # 405 — canonical response
+    HTTPStatus.NOT_FOUND,  # 404 — some routers return this for no matching route
+    HTTPStatus.BAD_REQUEST,  # 400 — some runtimes return this
+    HTTPStatus.FORBIDDEN,  # 403 — gateway-level rejection
 }
 
 _VALID_BODY: str = json.dumps(VALID_OVMS_INFERENCE_BODY)
@@ -134,8 +129,7 @@ class TestInvalidHttpMethods:
         )
 
         assert status_code in _METHOD_NOT_ALLOWED_CODES, (
-            f"Expected 4xx for HTTP {method} on /infer endpoint, "
-            f"got {status_code}. Response: {response_body}"
+            f"Expected 4xx for HTTP {method} on /infer endpoint, got {status_code}. Response: {response_body}"
         )
 
     def test_pod_remains_healthy_after_invalid_http_methods(
