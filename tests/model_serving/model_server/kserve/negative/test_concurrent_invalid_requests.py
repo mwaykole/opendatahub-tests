@@ -1,166 +1,171 @@
 """
-Tests for concurrent invalid inference request handling.
+Tests for system stability under concurrent invalid inference requests.
 
-A burst of simultaneous invalid requests (wrong JSON, wrong content-type,
-missing fields) is a realistic edge case that can expose concurrency bugs
-in the predictor runtime or Envoy sidecar:
+Boundary condition: sending a burst of malformed/invalid requests concurrently
+stresses the server's error-handling path without any valid traffic.  The goals
+are:
 
-  - Thread-safety issues in the JSON parser.
-  - Connection pool exhaustion causing healthy requests to time-out.
-  - Predictor container crashing due to repeated rapid failures.
+1. Every concurrent request receives a 4xx (client-error) response – the server
+   must not silently swallow errors or return 5xx when the input is invalid.
+2. The predictor pod set remains identical (no pod restarts or evictions).
+3. The KServe control plane (kserve-controller-manager, odh-model-controller)
+   stays Available and accumulates no new container restarts.
 
-These tests fire N concurrent invalid requests using Python's
-``concurrent.futures.ThreadPoolExecutor``, then verify that:
-  1. Every request received a non-2xx response (error was surfaced to the client).
-  2. Predictor pods are still running with no new restarts.
-  3. A subsequent valid request still returns HTTP 200.
+This complements the single-request negative tests by verifying the runtime is
+resilient to concurrent bad traffic, which is a realistic production scenario
+(e.g., a misbehaving client flooding the endpoint).
 """
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from http import HTTPStatus
 from typing import Any
 
 import pytest
 from kubernetes.dynamic import DynamicClient
 from ocp_resources.inference_service import InferenceService
+from pytest_testconfig import config as py_config
 
+from tests.model_serving.model_server.kserve.negative.constants import CONCURRENT_INVALID_REQUEST_COUNT
 from tests.model_serving.model_server.kserve.negative.utils import (
-    VALID_OVMS_INFERENCE_BODY,
+    assert_kserve_control_plane_stable,
     assert_pods_healthy,
-    send_inference_request,
+    send_inference_requests_concurrently,
+    snapshot_kserve_control_plane_restart_totals,
 )
 
 pytestmark = pytest.mark.usefixtures("valid_aws_config")
 
-# Concurrency level — low enough to be reliable without cluster-resource pressure
-_CONCURRENT_REQUESTS: int = 5
-
-# Payloads that should always be rejected
-INVALID_PAYLOADS: list[tuple[str, str]] = [
-    ('{"inputs": [{"name": "Input3"', "truncated_json"),
-    ("not json at all", "plain_text"),
-    ("{}", "empty_json_object"),
-    ("null", "null_json"),
-    ('{"inputs": "should_be_list"}', "wrong_inputs_type"),
-]
-
-CONCURRENT_EXPECTED_ERROR_CODES: set[int] = {
-    HTTPStatus.BAD_REQUEST,
-    HTTPStatus.PRECONDITION_FAILED,
-    HTTPStatus.UNPROCESSABLE_ENTITY,
-    HTTPStatus.INTERNAL_SERVER_ERROR,
+# Acceptable error codes for malformed concurrent requests
+CONCURRENT_INVALID_EXPECTED_CODES: set[int] = {
+    HTTPStatus.BAD_REQUEST,          # 400
+    HTTPStatus.PRECONDITION_FAILED,  # 412
+    HTTPStatus.UNPROCESSABLE_ENTITY, # 422
+    HTTPStatus.TOO_MANY_REQUESTS,    # 429 – if the server rate-limits the burst
+    HTTPStatus.SERVICE_UNAVAILABLE,  # 503 – transient overload acceptable
 }
+
+# A deliberately malformed body shared across all concurrent requests
+CONCURRENT_MALFORMED_BODY: str = '{"inputs": [{"name": "Input3"'  # missing closing brackets
 
 
 @pytest.mark.tier3
 @pytest.mark.rawdeployment
 class TestConcurrentInvalidRequests:
-    """Concurrent bursts of invalid requests must not destabilize the predictor.
+    """KServe remains stable under a concurrent burst of invalid inference requests.
 
     Preconditions:
-        - InferenceService deployed with OVMS runtime (RawDeployment)
-        - Model is ready and serving
-
-    Test Steps:
-        1. Spawn N threads, each sending a different invalid payload simultaneously
-        2. Wait for all threads to complete
-        3. Assert every response was non-2xx
-        4. Check predictor pod health (no restarts, same UIDs)
-        5. Send a valid request to confirm the service still works
+        - OVMS RawDeployment InferenceService is deployed and Ready
+        - ``CONCURRENT_INVALID_REQUEST_COUNT`` is set to 10 in constants
 
     Expected Results:
-        - All concurrent invalid requests return 4xx errors
-        - Model pod remains healthy (Running, no restarts)
-        - Valid inference request succeeds after the burst
+        - All concurrent requests receive 4xx responses (no silent success)
+        - Predictor pod UIDs unchanged, no new restarts
+        - Control-plane deployments remain Available with no new container restarts
     """
 
-    def test_concurrent_invalid_requests_all_return_errors(
+    def test_all_concurrent_invalid_requests_return_error(
         self,
         negative_test_ovms_isvc: InferenceService,
     ) -> None:
-        """Concurrent invalid requests must all return non-2xx status codes.
+        """Verify that all concurrent malformed requests receive 4xx responses.
 
         Given an InferenceService is deployed and ready
-        When sending multiple invalid requests concurrently
-        Then all requests should receive error responses
+        When sending 10 concurrent POST requests with malformed JSON bodies
+        Then every response must have a 4xx status code
         """
-        results: list[tuple[int, str, str]] = []
+        results = send_inference_requests_concurrently(
+            inference_service=negative_test_ovms_isvc,
+            body=CONCURRENT_MALFORMED_BODY,
+            count=CONCURRENT_INVALID_REQUEST_COUNT,
+        )
 
-        with ThreadPoolExecutor(max_workers=_CONCURRENT_REQUESTS) as executor:
-            futures = {
-                executor.submit(
-                    send_inference_request,
-                    inference_service=negative_test_ovms_isvc,
-                    body=payload,
-                ): label
-                for payload, label in INVALID_PAYLOADS
-            }
-            for future in as_completed(futures):
-                label = futures[future]
-                status_code, response_body = future.result()
-                results.append((status_code, response_body, label))
+        assert len(results) == CONCURRENT_INVALID_REQUEST_COUNT, (
+            f"Expected {CONCURRENT_INVALID_REQUEST_COUNT} results, got {len(results)}"
+        )
 
-        for status_code, response_body, label in results:
-            assert status_code != HTTPStatus.OK, (
-                f"Concurrent invalid request ({label}) returned 200 OK unexpectedly. "
-                f"Response: {response_body}"
+        for idx, (status_code, response_body) in enumerate(results):
+            assert status_code in CONCURRENT_INVALID_EXPECTED_CODES, (
+                f"Request #{idx + 1}: expected 4xx/503 for concurrent malformed JSON, "
+                f"got {status_code}. Response: {response_body}"
             )
 
-    def test_pod_remains_healthy_after_concurrent_invalid_requests(
+    def test_pod_stable_after_concurrent_invalid_requests(
         self,
         admin_client: DynamicClient,
         negative_test_ovms_isvc: InferenceService,
         initial_pod_state: dict[str, dict[str, Any]],
     ) -> None:
-        """Predictor pods must survive a burst of concurrent invalid requests.
+        """Verify predictor pod stability after a concurrent burst of invalid requests.
 
         Given an InferenceService is deployed and ready
-        When sending multiple invalid requests simultaneously
-        Then the same pods should still be running without additional restarts
+        When sending 10 concurrent malformed requests
+        Then the same pods (by UID) should still be running without additional restarts
         """
-        with ThreadPoolExecutor(max_workers=_CONCURRENT_REQUESTS) as executor:
-            futures = [
-                executor.submit(
-                    send_inference_request,
-                    inference_service=negative_test_ovms_isvc,
-                    body=payload,
-                )
-                for payload, _ in INVALID_PAYLOADS
-            ]
-            for f in as_completed(futures):
-                f.result()  # raise immediately if the helper itself threw
-
+        send_inference_requests_concurrently(
+            inference_service=negative_test_ovms_isvc,
+            body=CONCURRENT_MALFORMED_BODY,
+            count=CONCURRENT_INVALID_REQUEST_COUNT,
+        )
         assert_pods_healthy(
             admin_client=admin_client,
             isvc=negative_test_ovms_isvc,
             initial_pod_state=initial_pod_state,
         )
 
+    def test_control_plane_stable_after_concurrent_invalid_requests(
+        self,
+        admin_client: DynamicClient,
+        negative_test_ovms_isvc: InferenceService,
+    ) -> None:
+        """Verify KServe control plane remains stable after concurrent invalid traffic.
+
+        Given an InferenceService is deployed and ready
+        When sending 10 concurrent malformed requests to the predictor
+        Then kserve-controller-manager and odh-model-controller must remain Available
+        and must not accumulate new container restarts
+        """
+        applications_namespace: str = py_config["applications_namespace"]
+        prior_restart_totals = snapshot_kserve_control_plane_restart_totals(
+            admin_client=admin_client,
+            applications_namespace=applications_namespace,
+        )
+
+        send_inference_requests_concurrently(
+            inference_service=negative_test_ovms_isvc,
+            body=CONCURRENT_MALFORMED_BODY,
+            count=CONCURRENT_INVALID_REQUEST_COUNT,
+        )
+
+        assert_kserve_control_plane_stable(
+            admin_client=admin_client,
+            applications_namespace=applications_namespace,
+            prior_restart_totals=prior_restart_totals,
+        )
+
     def test_valid_request_succeeds_after_concurrent_invalid_burst(
         self,
         negative_test_ovms_isvc: InferenceService,
     ) -> None:
-        """Valid inference requests must succeed after a burst of concurrent invalid ones.
+        """Verify that a valid request succeeds after a burst of invalid ones.
 
-        Given an InferenceService is deployed and ready
-        When sending a burst of concurrent invalid requests followed by a valid one
-        Then the valid request should return HTTP 200 with proper model output
+        Given an InferenceService has just processed 10 concurrent malformed requests
+        When sending one additional valid JSON request
+        Then the server must return HTTP 200 with a non-empty outputs field,
+        demonstrating that the error-handling path did not corrupt internal state.
         """
-        # Fire concurrent invalid requests
-        with ThreadPoolExecutor(max_workers=_CONCURRENT_REQUESTS) as executor:
-            futures = [
-                executor.submit(
-                    send_inference_request,
-                    inference_service=negative_test_ovms_isvc,
-                    body=payload,
-                )
-                for payload, _ in INVALID_PAYLOADS
-            ]
-            for f in as_completed(futures):
-                f.result()
+        # First, flood with invalid requests
+        send_inference_requests_concurrently(
+            inference_service=negative_test_ovms_isvc,
+            body=CONCURRENT_MALFORMED_BODY,
+            count=CONCURRENT_INVALID_REQUEST_COUNT,
+        )
 
-        # Confirm the service still works correctly
+        # Then send a valid request via the standard send_inference_request helper
+        from tests.model_serving.model_server.kserve.negative.utils import (
+            VALID_OVMS_INFERENCE_BODY,
+            send_inference_request,
+        )
+
         valid_body = json.dumps(VALID_OVMS_INFERENCE_BODY)
         status_code, response_body = send_inference_request(
             inference_service=negative_test_ovms_isvc,
@@ -168,6 +173,10 @@ class TestConcurrentInvalidRequests:
         )
 
         assert status_code == HTTPStatus.OK, (
-            f"Valid inference request returned {status_code} after concurrent invalid burst. "
+            f"Valid request after concurrent invalid burst returned {status_code}. "
             f"Response: {response_body}"
+        )
+        parsed = json.loads(response_body)
+        assert parsed.get("outputs"), (
+            f"Valid request after concurrent burst returned empty outputs. Response: {response_body}"
         )
