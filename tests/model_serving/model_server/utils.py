@@ -410,7 +410,8 @@ def verify_scale_down_to_min_replicas(
     The function:
     1. Waits for the background load thread (attached as ``isvc._keda_load_thread``) to finish,
        ensuring load has truly stopped before starting the cooldown window.
-    2. Polls the predictor pod count until it equals ``min_replicas`` within ``scale_down_timeout``.
+    2. Polls the predictor pod count until it equals ``min_replicas`` for two consecutive polls
+       within ``scale_down_timeout``, guarding against transient dips.
 
     Args:
         client: DynamicClient instance used to list predictor pods.
@@ -418,9 +419,9 @@ def verify_scale_down_to_min_replicas(
             thread started by the ``stressed_keda_vllm_inference_service`` fixture.
         min_replicas: Expected pod count after KEDA scale-down (the ISVC ``minReplicaCount``).
         load_thread_join_timeout: Maximum seconds to wait for the load thread to finish.
-            Defaults to 15 minutes — covers the 600 s load duration plus buffer.
+            Defaults to 15 minutes - covers the 600 s load duration plus buffer.
         scale_down_timeout: Maximum seconds to wait for replicas to reach ``min_replicas``
-            after load stops.  Defaults to 10 minutes — covers the KEDA cooldown period
+            after load stops.  Defaults to 10 minutes - covers the KEDA cooldown period
             (default 300 s) plus scale-down propagation time.
         sleep: Polling interval in seconds while waiting for pod count to decrease.
 
@@ -449,6 +450,7 @@ def verify_scale_down_to_min_replicas(
     )
 
     pods: list[Any] = []
+    consecutive_matches = 0
     try:
         for pods in inference_service_pods_sampler(
             client=client,
@@ -459,9 +461,16 @@ def verify_scale_down_to_min_replicas(
             current_count = len(pods) if pods else 0
             LOGGER.debug(f"ISVC '{isvc.name}' pod count: {current_count} (target: {min_replicas})")
             if current_count == min_replicas:
-                LOGGER.info(f"KEDA successfully scaled down ISVC '{isvc.name}' to {min_replicas} replica(s).")
-                return
-    except TimeoutExpiredError:
+                consecutive_matches += 1
+                if consecutive_matches >= 2:
+                    LOGGER.info(
+                        f"KEDA successfully scaled down ISVC '{isvc.name}' to {min_replicas} replica(s) "
+                        f"(confirmed stable over {consecutive_matches} consecutive polls)."
+                    )
+                    return
+            else:
+                consecutive_matches = 0
+    except TimeoutExpiredError as err:
         current_count = len(pods) if pods else 0
         raise AssertionError(
             f"KEDA did not scale down ISVC '{isvc.name}' to {min_replicas} replica(s) "
@@ -469,7 +478,7 @@ def verify_scale_down_to_min_replicas(
             f"Current pod count: {current_count}. "
             "This may indicate a regression of RHOAIENG-32306 where the KEDA controller's "
             "scale-down decision is blocked by a KServe webhook re-patching the replica count."
-        )
+        ) from err
 
 
 def verify_no_inference_pods(

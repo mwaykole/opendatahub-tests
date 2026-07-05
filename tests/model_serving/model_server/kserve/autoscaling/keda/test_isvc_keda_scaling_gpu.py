@@ -39,7 +39,11 @@ VLLM_METRICS_THRESHOLD_REQUESTS = 4
 # upper bound when asserting replica count returns to minReplicaCount.
 KEDA_SCALE_DOWN_TIMEOUT = Timeout.TIMEOUT_10MIN
 
-pytestmark = [pytest.mark.keda, pytest.mark.usefixtures("skip_if_no_supported_gpu_type", "valid_aws_config")]
+pytestmark = [
+    pytest.mark.keda,
+    pytest.mark.tier2,
+    pytest.mark.usefixtures("skip_if_no_supported_gpu_type", "valid_aws_config"),
+]
 
 
 @pytest.mark.parametrize(
