@@ -15,6 +15,7 @@ class KServeDeploymentType:
 
 
 class ModelFormat:
+    AUTOGLUON: str = "autogluon"
     CAIKIT: str = "caikit"
     LIGHTGBM: str = "lightgbm"
     MLSERVER: str = "mlserver"
@@ -70,6 +71,7 @@ class ModelEndpoint:
 
 
 class ModelVersion:
+    AUTOGLUON_1: str = "1"
     OPSET1: str = "opset1"
     OPSET13: str = "opset13"
 
@@ -85,6 +87,8 @@ class RuntimeTemplates:
     VLLM_GAUDI: str = "vllm-gaudi-runtime-template"
     VLLM_SPYRE: str = "vllm-spyre-x86-runtime-template"
     VLLM_CPU_x86: str = "vllm-cpu-x86-runtime-template"
+    VLLM_CPU_POWER: str = "vllm-cpu-power-runtime-template"
+    VLLM_CPU_Z: str = "vllm-cpu-z-runtime-template"
     MLSERVER: str = f"{ModelFormat.MLSERVER}-runtime-template"
     TRITON_REST: str = "triton-rest-runtime-template"
     TRITON_GRPC: str = "triton-grpc-runtime-template"
@@ -101,6 +105,7 @@ class ModelInferenceRuntime:
     VLLM_RUNTIME: str = f"{ModelFormat.VLLM}-runtime"
     TENSORFLOW_RUNTIME: str = f"{ModelFormat.TENSORFLOW}-runtime"
     MLSERVER_RUNTIME: str = f"{ModelFormat.MLSERVER}-runtime"
+    AUTOGLUON_RUNTIME: str = f"{ModelFormat.AUTOGLUON}-runtime"
 
 
 class Protocols:
@@ -135,7 +140,9 @@ class AcceleratorType:
     GAUDI: str = "gaudi"
     SPYRE: str = "spyre"
     CPU_x86: str = "cpu_x86"
-    SUPPORTED_LISTS: list[str] = [NVIDIA, AMD, GAUDI, SPYRE, CPU_x86]  # noqa: RUF012
+    CPU_POWER: str = "cpu_power"
+    CPU_Z: str = "cpu_z"
+    SUPPORTED_LISTS: list[str] = [NVIDIA, AMD, GAUDI, SPYRE, CPU_x86, CPU_POWER, CPU_Z]  # noqa: RUF012
 
 
 class ApiGroups:
@@ -144,7 +151,9 @@ class ApiGroups:
     KSERVE: str = "serving.kserve.io"
     KUADRANT_IO: str = "kuadrant.io"
     MAAS_IO: str = "maas.opendatahub.io"
+    INFERENCE_OPENDATAHUB_IO: str = "inference.opendatahub.io"
     AUTH_IO: str = "SERVICES_PLATFORM_OPENDATAHUB_IO"
+    SPARKOPERATOR_K8S_IO: str = "sparkoperator.k8s.io"
 
 
 class Annotations:
@@ -489,6 +498,8 @@ class ContainerImages:
 
 
 TRUSTYAI_SERVICE_NAME: str = "trustyai-service"
+QWEN_ISVC_NAME = "qwen-isvc"
+QWEN_MODEL_NAME: str = "qwen25-05b-instruct"
 
 LLM_D_INFERENCE_SIM_NAME = "llm-d-inference-sim"
 

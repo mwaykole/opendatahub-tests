@@ -9,7 +9,7 @@ from tests.ai_hub.model_catalog.metadata.utils import (
     get_metadata_from_catalog_pod,
     validate_custom_properties_match_metadata,
 )
-from tests.ai_hub.utils import execute_get_command
+from tests.ai_hub.utils import execute_get_command_with_retry
 
 LOGGER = structlog.get_logger(name=__name__)
 
@@ -25,6 +25,7 @@ pytestmark = [
 class TestCustomProperties:
     """Test suite for validating custom properties in model catalog API"""
 
+    @pytest.mark.downstream_only
     def test_custom_properties_match_metadata(
         self,
         model_with_benchmark_metadata: tuple[dict[Any, Any], str, str],
@@ -53,7 +54,7 @@ class TestCustomProperties:
         """
         valid_model_types = {"generative", "predictive", "unknown"}
 
-        response = execute_get_command(
+        response = execute_get_command_with_retry(
             url=f"{model_catalog_rest_url[0]}models?source={catalog_id}&pageSize=100",
             headers=model_registry_rest_headers,
         )
@@ -84,6 +85,7 @@ class TestCustomProperties:
         LOGGER.info(f"All {len(models)} models in catalog '{catalog_id}' have valid model_type values")
 
 
+@pytest.mark.downstream_only
 @pytest.mark.skip_must_gather
 class TestHardwareTagProperty:
     """Tests for RHOAIENG-61492: hardware_tag custom property on Intel Xeon validated models."""
@@ -116,7 +118,7 @@ class TestHardwareTagProperty:
         When querying its custom properties
         Then hardware_tag should be present with value 'Intel Xeon'
         """
-        response = execute_get_command(
+        response = execute_get_command_with_retry(
             url=f"{model_catalog_rest_url[0]}models",
             headers=model_registry_rest_headers,
             params={"pageSize": 1, "filterQuery": f"name='{model_name}'"},
@@ -159,7 +161,7 @@ class TestMultilingualModelProperties:
         When querying the model via the catalog API
         Then the model should have all expected languages saved
         """
-        model = execute_get_command(
+        model = execute_get_command_with_retry(
             url=f"{model_catalog_rest_url[0]}sources/{catalog_id}/models/{model_name}",
             headers=model_registry_rest_headers,
         )
