@@ -26,31 +26,6 @@ MODEL_CACHE_SIZE: str = "10Gi"
 MODEL_CACHE_NODE_COUNT: int = 2
 MINT_ONNX_STORAGE_PATH: str = "test-dir"
 
-# vLLM CPU container tuned for fast startup in CI, mirroring
-# tests/model_serving/model_server/llmd/llmd_configs/config_base.py::CpuConfig
-# so the LLMInferenceService model-cache smoke test starts as reliably as the
-# existing llm-d CPU suite.
-TINYLLAMA_LLMISVC_CONTAINER_ENV: list[dict[str, str]] = [
-    {"name": "VLLM_LOGGING_LEVEL", "value": "DEBUG"},
-    {
-        "name": "VLLM_ADDITIONAL_ARGS",
-        "value": "--max-num-seqs 20 --max-model-len 128 --enforce-eager --ssl-ciphers ECDHE+AESGCM:DHE+AESGCM",
-    },
-    {"name": "VLLM_CPU_KVCACHE_SPACE", "value": "4"},
-]
-TINYLLAMA_LLMISVC_CONTAINER_RESOURCES: dict[str, dict[str, str]] = {
-    "limits": {"cpu": "1", "memory": "10Gi"},
-    "requests": {"cpu": "100m", "memory": "8Gi"},
-}
-TINYLLAMA_LLMISVC_LIVENESS_PROBE: dict[str, Any] = {
-    "httpGet": {"path": "/health", "port": 8000, "scheme": "HTTPS"},
-    "initialDelaySeconds": 240,
-    "periodSeconds": 60,
-    "timeoutSeconds": 60,
-    "failureThreshold": 10,
-}
-TINYLLAMA_LLMISVC_WAIT_TIMEOUT: int = 420
-
 
 class LocalModelNodeGroup(Resource):
     """`LocalModelNodeGroup` CR provisioned by the operator for model-cache worker nodes."""

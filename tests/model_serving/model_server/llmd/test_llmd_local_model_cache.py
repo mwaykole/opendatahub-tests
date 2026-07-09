@@ -10,6 +10,7 @@ from tests.model_serving.model_server.kserve.model_cache.utils import (
     cache_status_dict,
 )
 from tests.model_serving.model_server.llmd.utils import (
+    ns_from_file,
     parse_completion_text,
     send_chat_completions,
 )
@@ -20,28 +21,21 @@ pytestmark = [
     pytest.mark.usefixtures("valid_aws_config", "skip_if_disconnected"),
 ]
 
+NAMESPACE = ns_from_file(file=__file__)
 
-class TestLLMISVCModelCacheSmoke:
+
+@pytest.mark.parametrize("unprivileged_model_namespace", [{"name": NAMESPACE}], indirect=True)
+class TestLLMDModelCacheSmoke:
     """Smoke coverage for KServe local model namespace cache with ``LLMInferenceService`` workloads.
 
-    Mirrors ``TestModelCacheSmoke`` in ``test_local_model_cache.py`` (TC-04/TC-05), proving that
-    local model caching — already covered for ``InferenceService`` — also works for the newer
-    ``LLMInferenceService`` CRD, since both are watched and reconciled by the same
+    Mirrors ``TestModelCacheSmoke`` in ``kserve/model_cache/test_local_model_cache.py`` (TC-04/TC-05),
+    proving that local model caching — already covered for ``InferenceService`` — also works for the
+    newer ``LLMInferenceService`` CRD, since both are watched and reconciled by the same
     ``LocalModelNamespaceCache`` controller.
     """
 
     @pytest.mark.slow
-    @pytest.mark.parametrize(
-        "unprivileged_model_namespace",
-        [
-            pytest.param(
-                {"name": "llmisvc-model-cache-smoke"},
-                id="test_llmisvc_namespace_cache_node_downloaded",
-            )
-        ],
-        indirect=True,
-    )
-    def test_llmisvc_local_model_cache_reaches_node_downloaded(
+    def test_llmd_local_model_cache_reaches_node_downloaded(
         self,
         unprivileged_model_namespace: Any,
         tinyllama_local_model_cache: LocalModelNamespaceCache,
@@ -63,16 +57,6 @@ class TestLLMISVCModelCacheSmoke:
         assert (copies.get("available") or 0) >= 1
 
     @pytest.mark.slow
-    @pytest.mark.parametrize(
-        "unprivileged_model_namespace",
-        [
-            pytest.param(
-                {"name": "llmisvc-model-cache-smoke"},
-                id="test_cached_llmisvc_inference",
-            )
-        ],
-        indirect=True,
-    )
     def test_cached_llmisvc_inference_succeeds(
         self,
         unprivileged_client: DynamicClient,
