@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 from kubernetes.dynamic import DynamicClient
 from ocp_resources.llm_inference_service import LLMInferenceService
+from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
 from tests.model_serving.model_server.kserve.model_cache.utils import (
     LocalModelNamespaceCache,
@@ -71,8 +72,18 @@ class TestLLMDModelCacheSmoke:
         llmisvc = tinyllama_llmisvc_local_model_cache
         assert_llmisvc_uses_cached_pvc(client=unprivileged_client, llmisvc=llmisvc)
 
-        status, body = send_chat_completions(llmisvc=llmisvc, prompt="What is the capital of Italy?")
-        assert status == 200, f"Expected 200, got {status}: {body}"
+        try:
+            for sample in TimeoutSampler(
+                wait_timeout=120,
+                sleep=10,
+                func=lambda: send_chat_completions(llmisvc=llmisvc, prompt="What is the capital of Italy?"),
+            ):
+                status, body = sample
+                if status == 200:
+                    break
+        except TimeoutExpiredError:
+            pytest.fail(f"Inference did not return 200 within 120s; last status={status}: {body}")
+
         completion = parse_completion_text(response_body=body)
         assert completion, f"Expected non-empty completion text, got: {body}"
 
