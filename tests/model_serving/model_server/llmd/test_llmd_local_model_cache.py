@@ -3,7 +3,6 @@ from typing import Any
 import pytest
 from kubernetes.dynamic import DynamicClient
 from ocp_resources.llm_inference_service import LLMInferenceService
-from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
 from tests.model_serving.model_server.kserve.model_cache.utils import (
     LocalModelNamespaceCache,
@@ -14,6 +13,7 @@ from tests.model_serving.model_server.llmd.utils import (
     ns_from_file,
     parse_completion_text,
     send_chat_completions,
+    workaround_503_no_healthy_upstream,
 )
 
 pytestmark = [
@@ -41,9 +41,11 @@ class TestLLMDModelCacheSmoke:
         unprivileged_model_namespace: Any,
         tinyllama_local_model_cache: LocalModelNamespaceCache,
     ) -> None:
-        """Given a provisioned LocalModelNamespaceCache for a TinyLlama model,
-        when status is refreshed,
-        then all nodes in the node group are NodeDownloaded and copies are healthy.
+        """Test steps:
+
+        1. Retrieve the LocalModelNamespaceCache status for the TinyLlama model.
+        2. Assert every node in ``status.nodeStatus`` reports ``NodeDownloaded``.
+        3. Assert ``copies.failed`` is 0 and ``copies.available`` equals ``copies.total``.
         """
         status = cache_status_dict(cache=tinyllama_local_model_cache)
         node_status = status.get("nodeStatus") or {}
@@ -65,25 +67,24 @@ class TestLLMDModelCacheSmoke:
         tinyllama_local_model_cache: LocalModelNamespaceCache,
         tinyllama_llmisvc_local_model_cache: LLMInferenceService,
     ) -> None:
-        """Given an LLMInferenceService whose model URI matches a cached model,
-        when a chat completion request is sent,
-        then the PVC rewrite is present on the LLMISVC and the request succeeds.
+        """Test steps:
+
+        1. Assert the LLMISVC spec was rewritten to use a PVC-backed volume (cache hit).
+        2. Warm up the inference endpoint (workaround for RHOAIENG-55154).
+        3. Send a chat completion request and assert the response status is 200.
+        4. Assert the completion text is non-empty.
+        5. Refresh the LocalModelNamespaceCache and assert the LLMISVC is listed
+           under ``status.llmInferenceServices``.
         """
         llmisvc = tinyllama_llmisvc_local_model_cache
+        prompt = "What is the capital of Italy?"
+
         assert_llmisvc_uses_cached_pvc(client=unprivileged_client, llmisvc=llmisvc)
 
-        try:
-            for sample in TimeoutSampler(
-                wait_timeout=120,
-                sleep=10,
-                func=lambda: send_chat_completions(llmisvc=llmisvc, prompt="What is the capital of Italy?"),
-            ):
-                status, body = sample
-                if status == 200:
-                    break
-        except TimeoutExpiredError:
-            pytest.fail(f"Inference did not return 200 within 120s; last status={status}: {body}")
+        workaround_503_no_healthy_upstream(llmisvc=llmisvc, prompt=prompt)
 
+        status, body = send_chat_completions(llmisvc=llmisvc, prompt=prompt)
+        assert status == 200, f"Expected 200, got {status}: {body}"
         completion = parse_completion_text(response_body=body)
         assert completion, f"Expected non-empty completion text, got: {body}"
 
