@@ -390,7 +390,15 @@ def gpu_model_car_inference_service(
         yield isvc
 
 
-# Model Cache Fixtures
+def _is_node_ready_and_schedulable(*, node: Node) -> bool:
+    """Return ``True`` if the node is ``Ready`` and not cordoned/unschedulable."""
+    conditions = node.instance.status.get("conditions") or []
+    is_ready = any(cond.get("type") == "Ready" and cond.get("status") == "True" for cond in conditions)
+    is_unschedulable = bool(node.instance.spec.get("unschedulable"))
+    return is_ready and not is_unschedulable
+
+
+
 @pytest.fixture(scope="session")
 def model_cache_infra_ready(
     admin_client: DynamicClient,
@@ -401,6 +409,12 @@ def model_cache_infra_ready(
     ``cacheSize`` and two worker ``nodeNames``.  On teardown the
     ``ResourceEditor`` restores the original DSC spec automatically.
 
+    Session scope is intentional: the DSC is a cluster singleton, and toggling
+    ``modelCache`` triggers operator reconciliation (~minutes).  Bundling the
+    DSC patch, readiness wait, ``LocalModelNodeGroup`` existence check, and
+    agent ``DaemonSet`` readiness into one fixture avoids paying that cost per
+    test class while keeping the setup/teardown atomic.
+
     Shared by both ``InferenceService`` (``kserve/model_cache``) and
     ``LLMInferenceService`` (``llmd``) local model cache tests, since the
     ``LocalModelNamespaceCache`` controller and its DSC toggle are common
@@ -410,10 +424,18 @@ def model_cache_infra_ready(
     applications_namespace: str = py_config["applications_namespace"]
 
     already_labeled = sorted(
-        [node.name for node in Node.get(client=admin_client, label_selector="kserve/localmodel=worker")],
+        [
+            node.name
+            for node in Node.get(client=admin_client, label_selector="kserve/localmodel=worker")
+            if _is_node_ready_and_schedulable(node=node)
+        ],
     )
     all_workers = sorted(
-        [node.name for node in Node.get(client=admin_client, label_selector="node-role.kubernetes.io/worker")],
+        [
+            node.name
+            for node in Node.get(client=admin_client, label_selector="node-role.kubernetes.io/worker")
+            if _is_node_ready_and_schedulable(node=node)
+        ],
     )
 
     if len(already_labeled) >= MODEL_CACHE_NODE_COUNT:

@@ -48,7 +48,7 @@ def model_cache_download_s3_secret(
     applications_namespace: str = py_config["applications_namespace"]
     with s3_endpoint_secret(
         client=admin_client,
-        name="model-cache-download-secret",
+        name=f"model-cache-download-secret-{shortuuid.uuid()[:10].lower()}",
         namespace=applications_namespace,
         aws_access_key=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
@@ -70,7 +70,7 @@ def invalid_s3_download_secret(
     applications_namespace: str = py_config["applications_namespace"]
     with s3_endpoint_secret(
         client=admin_client,
-        name="model-cache-invalid-secret",
+        name=f"model-cache-invalid-secret-{shortuuid.uuid()[:10].lower()}",
         namespace=applications_namespace,
         aws_access_key="INVALIDACCESSKEY12345",
         aws_secret_access_key="INVALIDSECRETACCESSKEY6789",  # pragma: allowlist secret
@@ -121,7 +121,7 @@ def mnist_onnx_local_model_cache_inference_service(
     """
     with create_isvc(
         client=unprivileged_client,
-        name=f"{Protocols.HTTP}-{ModelFormat.ONNX}-lmcache",
+        name=f"{Protocols.HTTP}-{ModelFormat.ONNX}-lmcache-{shortuuid.uuid()[:8].lower()}",
         namespace=unprivileged_model_namespace.name,
         runtime=ovms_kserve_serving_runtime.name,
         storage_uri=f"s3://{ci_s3_bucket_name}/{MINT_ONNX_STORAGE_PATH}/",

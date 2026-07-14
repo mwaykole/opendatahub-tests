@@ -104,13 +104,14 @@ def _cache_download_state_sample(*, cache: LocalModelNamespaceCache) -> dict[str
 def _assert_pod_has_pvc_source_volume(*, pod: Any) -> None:
     """Assert a Pod mounts the ``kserve-pvc-source`` volume and it is PVC-backed."""
     spec = pod.instance.spec
-    volume_names = [v.name for v in (spec.volumes or [])]
-    pvc_volumes = [v for v in (spec.volumes or []) if v.name == KSERVE_PVC_SOURCE_VOLUME_NAME]
+    volume_names = [vol.name for vol in (spec.volumes or [])]
+    pvc_volumes = [vol for vol in (spec.volumes or []) if vol.name == KSERVE_PVC_SOURCE_VOLUME_NAME]
     assert pvc_volumes, (
         f"Expected '{KSERVE_PVC_SOURCE_VOLUME_NAME}' PVC volume on pod {pod.name}; volumes={volume_names!r}"
     )
     assert any(
-        getattr(v, "persistent_volume_claim", None) or getattr(v, "persistentVolumeClaim", None) for v in pvc_volumes
+        getattr(vol, "persistent_volume_claim", None) or getattr(vol, "persistentVolumeClaim", None)
+        for vol in pvc_volumes
     ), f"Volume '{KSERVE_PVC_SOURCE_VOLUME_NAME}' on pod {pod.name} exists but is not PVC-backed"
 
 
@@ -140,7 +141,6 @@ def assert_predictor_uses_cached_pvc(
 
 
 def assert_llmisvc_uses_cached_pvc(
-    *,
     client: DynamicClient,
     llmisvc: LLMInferenceService,
 ) -> None:

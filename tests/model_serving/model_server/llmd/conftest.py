@@ -298,9 +298,6 @@ def llmisvc(
         yield svc
 
 
-# ===========================================
-#  Local Model Cache
-# ===========================================
 @pytest.fixture(scope="class")
 def tinyllama_model_cache_download_secret(
     admin_client: DynamicClient,
@@ -319,7 +316,7 @@ def tinyllama_model_cache_download_secret(
     applications_namespace: str = py_config["applications_namespace"]
     with s3_endpoint_secret(
         client=admin_client,
-        name="tinyllama-model-cache-download-secret",
+        name=f"tinyllama-mc-dl-secret-{shortuuid.uuid()[:10].lower()}",
         namespace=applications_namespace,
         aws_access_key=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
