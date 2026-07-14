@@ -398,7 +398,6 @@ def _is_node_ready_and_schedulable(*, node: Node) -> bool:
     return is_ready and not is_unschedulable
 
 
-
 @pytest.fixture(scope="session")
 def model_cache_infra_ready(
     admin_client: DynamicClient,
