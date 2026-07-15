@@ -1,15 +1,16 @@
 """Utility functions for negative inference tests."""
 
 import shlex
+import subprocess
 import threading
 from typing import Any
+from urllib.parse import quote as url_quote
 
 import structlog
 from kubernetes.dynamic import DynamicClient
 from ocp_resources.deployment import Deployment
 from ocp_resources.inference_service import InferenceService
 from ocp_resources.pod import Pod
-from pyhelper_utils.shell import run_command
 from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
 from tests.model_serving.model_server.kserve.negative.constants import KSERVE_CONTROL_PLANE_DEPLOYMENTS
@@ -286,17 +287,19 @@ def send_inference_request(
         raise ValueError(f"InferenceService '{inference_service.name}' has no URL; is it Ready?")
 
     target_model = model_name or inference_service.name
-    endpoint = f"{base_url}/v2/models/{target_model}/infer"
+    encoded_model = url_quote(target_model, safe="")
+    endpoint = f"{base_url}/v2/models/{encoded_model}/infer"
 
-    cmd = (
-        f"curl -s -w '\\n%{{http_code}}' "
-        f"-X POST {endpoint} "
-        f"-H 'Content-Type: {content_type}' "
-        f"--data-raw {shlex.quote(body)} "
-        f"--insecure"
-    )
-
-    _, out, _ = run_command(command=shlex.split(cmd), verify_stderr=False, check=False)
+    cmd_args = [
+        "curl", "-s", "-w", "\n%{http_code}",
+        "-X", "POST", endpoint,
+        "-H", f"Content-Type: {content_type}",
+        "--data-raw", body,
+        "--insecure",
+    ]
+    LOGGER.info(f"Running {' '.join(shlex.quote(a) for a in cmd_args)} command")
+    result = subprocess.run(cmd_args, capture_output=True, text=True, check=False)
+    out = result.stdout
 
     lines = out.strip().split("\n")
     try:
@@ -337,19 +340,19 @@ def send_inference_request_with_method(
         raise ValueError(f"InferenceService '{inference_service.name}' has no URL; is it Ready?")
 
     target_model = model_name or inference_service.name
-    endpoint = f"{base_url}/v2/models/{target_model}/infer"
+    encoded_model = url_quote(target_model, safe="")
+    endpoint = f"{base_url}/v2/models/{encoded_model}/infer"
 
-    body_flag = f"--data-raw {shlex.quote(body)}" if body else "--data-raw ''"
-
-    cmd = (
-        f"curl -s -w '\\n%{{http_code}}' "
-        f"-X {http_method} {endpoint} "
-        f"-H 'Content-Type: {content_type}' "
-        f"{body_flag} "
-        f"--insecure"
-    )
-
-    _, out, _ = run_command(command=shlex.split(cmd), verify_stderr=False, check=False)
+    cmd_args = [
+        "curl", "-s", "-w", "\n%{http_code}",
+        "-X", http_method, endpoint,
+        "-H", f"Content-Type: {content_type}",
+        "--data-raw", body,
+        "--insecure",
+    ]
+    LOGGER.info(f"Running {' '.join(shlex.quote(a) for a in cmd_args)} command")
+    result = subprocess.run(cmd_args, capture_output=True, text=True, check=False)
+    out = result.stdout
 
     lines = out.strip().split("\n")
     try:
