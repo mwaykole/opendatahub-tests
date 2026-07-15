@@ -2,7 +2,6 @@
 
 import shlex
 import subprocess
-import threading
 from typing import Any
 from urllib.parse import quote as url_quote
 
@@ -376,46 +375,3 @@ def send_inference_request_with_method(
     return status_code, "\n".join(lines[:-1])
 
 
-def send_inference_requests_concurrently(
-    inference_service: InferenceService,
-    body: str,
-    count: int,
-    model_name: str | None = None,
-    content_type: str = "application/json",
-) -> list[tuple[int, str]]:
-    """Send ``count`` inference requests concurrently using threads.
-
-    All requests share the same payload and target.  Results are collected
-    thread-safely and returned in the order threads complete (not the order
-    they were started).
-
-    Args:
-        inference_service: The InferenceService to target.
-        body: The raw string payload for every request.
-        count: Number of concurrent requests to send.
-        model_name: Override the model name in the URL path.
-        content_type: The Content-Type header for every request.
-
-    Returns:
-        A list of (status_code, response_body) tuples, one per request.
-    """
-    results: list[tuple[int, str]] = []
-    lock = threading.Lock()
-
-    def _worker() -> None:
-        result = send_inference_request(
-            inference_service=inference_service,
-            body=body,
-            model_name=model_name,
-            content_type=content_type,
-        )
-        with lock:
-            results.append(result)
-
-    threads = [threading.Thread(target=_worker) for _ in range(count)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    return results
