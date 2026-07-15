@@ -71,12 +71,10 @@ class TestUnsupportedContentType:
 
         acceptable_codes = {HTTPStatus.UNSUPPORTED_MEDIA_TYPE, HTTPStatus.OK, HTTPStatus.BAD_REQUEST}
         assert status_code in acceptable_codes, (
-            f"Expected 415/200/400 for Content-Type '{content_type}', "
-            f"got {status_code}. Response: {response_body}"
+            f"Expected 415/200/400 for Content-Type '{content_type}', got {status_code}. Response: {response_body}"
         )
         assert status_code < 500, (
-            f"Server error (5xx) for Content-Type '{content_type}': {status_code}. "
-            f"Response: {response_body}"
+            f"Server error (5xx) for Content-Type '{content_type}': {status_code}. Response: {response_body}"
         )
 
     def test_model_pod_remains_healthy_after_invalid_requests(
