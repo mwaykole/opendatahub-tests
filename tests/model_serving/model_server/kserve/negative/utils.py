@@ -286,7 +286,7 @@ def send_inference_request(
         raise ValueError(f"InferenceService '{inference_service.name}' has no URL; is it Ready?")
 
     target_model = model_name or inference_service.name
-    encoded_model = url_quote(target_model, safe="")
+    encoded_model = url_quote(string=target_model, safe="")
     endpoint = f"{base_url}/v2/models/{encoded_model}/infer"
 
     cmd_args = [
@@ -304,7 +304,7 @@ def send_inference_request(
         "--insecure",
     ]
     LOGGER.info(f"Running {' '.join(shlex.quote(a) for a in cmd_args)} command")
-    result = subprocess.run(cmd_args, capture_output=True, text=True, check=False)
+    result = subprocess.run(args=cmd_args, capture_output=True, text=True, check=False)
     out = result.stdout
 
     lines = out.strip().split("\n")
@@ -346,7 +346,7 @@ def send_inference_request_with_method(
         raise ValueError(f"InferenceService '{inference_service.name}' has no URL; is it Ready?")
 
     target_model = model_name or inference_service.name
-    encoded_model = url_quote(target_model, safe="")
+    encoded_model = url_quote(string=target_model, safe="")
     endpoint = f"{base_url}/v2/models/{encoded_model}/infer"
 
     cmd_args = [
@@ -364,7 +364,7 @@ def send_inference_request_with_method(
         "--insecure",
     ]
     LOGGER.info(f"Running {' '.join(shlex.quote(a) for a in cmd_args)} command")
-    result = subprocess.run(cmd_args, capture_output=True, text=True, check=False)
+    result = subprocess.run(args=cmd_args, capture_output=True, text=True, check=False)
     out = result.stdout
 
     lines = out.strip().split("\n")
@@ -373,5 +373,3 @@ def send_inference_request_with_method(
     except ValueError as exc:
         raise ValueError(f"Could not parse HTTP status code from curl output: {out!r}") from exc
     return status_code, "\n".join(lines[:-1])
-
-

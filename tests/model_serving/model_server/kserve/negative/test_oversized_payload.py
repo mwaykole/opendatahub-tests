@@ -95,7 +95,7 @@ class TestOversizedPayload:
         When sending a POST request with a 6 MB body that exceeds server limits
         Then the response must be a 4xx/503 error code indicating rejection
         """
-        status_code, response_body = _send_oversized_request(negative_test_ovms_isvc)
+        status_code, response_body = _send_oversized_request(inference_service=negative_test_ovms_isvc)
 
         assert status_code in OVERSIZED_PAYLOAD_EXPECTED_CODES, (
             f"Expected 413/400/408/503 for oversized payload ({OVERSIZED_PAYLOAD_SIZE_BYTES} bytes), "
@@ -114,7 +114,7 @@ class TestOversizedPayload:
         When sending a 6 MB request body that should be rejected
         Then the same pods (by UID) should still be running without additional restarts
         """
-        _send_oversized_request(negative_test_ovms_isvc)
+        _send_oversized_request(inference_service=negative_test_ovms_isvc)
         assert_pods_healthy(
             admin_client=admin_client,
             isvc=negative_test_ovms_isvc,
