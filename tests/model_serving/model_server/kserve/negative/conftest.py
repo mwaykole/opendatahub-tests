@@ -476,18 +476,20 @@ def cross_namespace_sa_token(
     admin_client: DynamicClient,
 ) -> Generator[str, Any, Any]:
     """Token from a SA in a different namespace with no access to neg-kserve."""
-    with create_ns(
-        admin_client=admin_client,
-        unprivileged_client=admin_client,
-        name="neg-other-ns",
-    ) as other_ns:
-        with ServiceAccount(
+    with (
+        create_ns(
+            admin_client=admin_client,
+            unprivileged_client=admin_client,
+            name="neg-other-ns",
+        ) as other_ns,
+        ServiceAccount(
             client=admin_client,
             namespace=other_ns.name,
             name="neg-cross-ns-sa",
-        ) as sa:
-            token = create_inference_token(model_service_account=sa)
-            yield token
+        ) as sa,
+    ):
+        token = create_inference_token(model_service_account=sa)
+        yield token
 
 
 @pytest.fixture(scope="class")

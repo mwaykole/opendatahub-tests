@@ -15,6 +15,7 @@ Security validation:
     - Error responses must NOT leak internal paths, token values, or pod names
 """
 
+import json
 import shlex
 from http import HTTPStatus
 from typing import Any
@@ -33,8 +34,6 @@ pytestmark = [
     pytest.mark.rawdeployment,
     pytest.mark.usefixtures("valid_aws_config"),
 ]
-
-import json
 
 _VALID_BODY: str = json.dumps(VALID_OVMS_INFERENCE_BODY)
 
@@ -115,8 +114,7 @@ class TestAuthUnauthorized:
         )
 
         assert status_code == HTTPStatus.UNAUTHORIZED, (
-            f"[{case_id}] Expected 401 for invalid auth, got {status_code}. "
-            f"Response: {response_body[:200]}"
+            f"[{case_id}] Expected 401 for invalid auth, got {status_code}. Response: {response_body[:200]}"
         )
 
     def test_error_response_does_not_leak_sensitive_info(
@@ -129,7 +127,7 @@ class TestAuthUnauthorized:
         When sending a request without authentication
         Then the error response body must not contain pod names, internal paths, or tokens
         """
-        status_code, response_body = _send_request_with_auth(
+        _, response_body = _send_request_with_auth(
             inference_service=negative_test_ovms_isvc_with_auth,
             auth_header="",
             body=_VALID_BODY,

@@ -10,6 +10,7 @@ These are distinct from 401 scenarios: the identity IS valid, but authorization
 is denied. Multi-tenant clusters require strict namespace isolation.
 """
 
+import json
 import shlex
 from http import HTTPStatus
 from typing import Any
@@ -28,8 +29,6 @@ pytestmark = [
     pytest.mark.rawdeployment,
     pytest.mark.usefixtures("valid_aws_config"),
 ]
-
-import json
 
 _VALID_BODY: str = json.dumps(VALID_OVMS_INFERENCE_BODY)
 
@@ -96,8 +95,7 @@ class TestRbacForbidden:
         )
 
         assert status_code == HTTPStatus.FORBIDDEN, (
-            f"Expected 403 for cross-namespace token, got {status_code}. "
-            f"Response: {response_body[:200]}"
+            f"Expected 403 for cross-namespace token, got {status_code}. Response: {response_body[:200]}"
         )
 
     def test_unauthorized_sa_token_returns_403(
@@ -118,8 +116,7 @@ class TestRbacForbidden:
         )
 
         assert status_code == HTTPStatus.FORBIDDEN, (
-            f"Expected 403 for unauthorized SA token, got {status_code}. "
-            f"Response: {response_body[:200]}"
+            f"Expected 403 for unauthorized SA token, got {status_code}. Response: {response_body[:200]}"
         )
 
     def test_pod_remains_healthy_after_forbidden_requests(
@@ -142,7 +139,7 @@ class TestRbacForbidden:
                 body=_VALID_BODY,
             )
             assert status_code == HTTPStatus.FORBIDDEN, (
-                f"Request {i+1} expected 403 before pod health check, got {status_code}"
+                f"Request {i + 1} expected 403 before pod health check, got {status_code}"
             )
 
         assert_pods_healthy(

@@ -95,9 +95,7 @@ class TestAuthRecovery:
                 token="invalid-token-that-should-fail",
                 body=_VALID_BODY,
             )
-            assert status_code == HTTPStatus.UNAUTHORIZED, (
-                f"Expected 401 for invalid token, got {status_code}"
-            )
+            assert status_code == HTTPStatus.UNAUTHORIZED, f"Expected 401 for invalid token, got {status_code}"
 
         status_code, response_body = _send_authed_request(
             inference_service=negative_test_ovms_isvc_with_auth,
