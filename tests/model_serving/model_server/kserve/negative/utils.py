@@ -67,7 +67,7 @@ def wait_for_isvc_model_status_states(
     *,
     target_model_state: str,
     transition_status: str,
-    timeout: int = Timeout.TIMEOUT_15MIN,
+    timeout: int = Timeout.TIMEOUT_4MIN,
     sleep: int = 5,
 ) -> None:
     """Poll until ``status.modelStatus`` matches the expected model and transition states.
@@ -117,7 +117,7 @@ def wait_for_isvc_model_status_states(
 def wait_for_isvc_ready_false(
     isvc: InferenceService,
     *,
-    timeout: int = Timeout.TIMEOUT_15MIN,
+    timeout: int = Timeout.TIMEOUT_4MIN,
     sleep: int = 5,
 ) -> None:
     """Poll until ISVC ``status.conditions`` contains ``Ready=False``.
