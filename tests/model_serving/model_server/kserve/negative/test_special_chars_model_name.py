@@ -46,6 +46,7 @@ _EXPECTED_REJECTION_CODES: set[int] = {
     HTTPStatus.NOT_FOUND,  # 404 - model not found (most common)
     HTTPStatus.BAD_REQUEST,  # 400 - request rejected before routing
     HTTPStatus.FORBIDDEN,  # 403 - path traversal blocked at gateway
+    HTTPStatus.NOT_ACCEPTABLE,  # 406 - OVMS returns this for mangled paths
     HTTPStatus.UNPROCESSABLE_ENTITY,  # 422 - invalid model name format
     HTTPStatus.METHOD_NOT_ALLOWED,  # 405 - method not allowed on the path
 }
