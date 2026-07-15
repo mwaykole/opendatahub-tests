@@ -4,7 +4,7 @@ Tests verifying inference recovery after authentication failures.
 After receiving multiple requests with invalid/missing tokens, the auth-protected
 ISVC must still accept and process a subsequent request with a valid token.
 This proves that auth failures do not corrupt endpoint state or leave the
-Authorino sidecar in a broken state.
+kube-rbac-proxy sidecar in a broken state.
 
 Customer scenario:
     A developer misconfigures their client token, gets repeated 401s, then
@@ -68,8 +68,8 @@ class TestAuthRecovery:
     """Valid inference succeeds immediately after repeated auth failures.
 
     Preconditions:
-        - InferenceService deployed with Authorino auth enabled and Ready
-        - A valid bearer token that grants access to the model
+        - InferenceService deployed with enable_auth=True and Ready
+        - A valid bearer token (SA with RBAC) that grants access to the model
 
     Expected Results:
         - After sending 5 requests with invalid tokens (all return 401)

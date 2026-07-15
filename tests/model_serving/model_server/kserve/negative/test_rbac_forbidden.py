@@ -1,10 +1,10 @@
 """
 Tests for RBAC authorization violations on auth-protected KServe inference endpoints.
 
-When a user has a valid token but lacks permission to access a specific model
-namespace, KServe/Authorino must return HTTP 403 Forbidden. This covers:
+When a user has a valid token but lacks permission to access a specific model,
+kube-rbac-proxy must return HTTP 403 Forbidden. This covers:
     - Valid token scoped to a different namespace (cross-namespace access)
-    - ServiceAccount token without required inference roles
+    - ServiceAccount token without required inference RBAC roles
 
 These are distinct from 401 scenarios: the identity IS valid, but authorization
 is denied. Multi-tenant clusters require strict namespace isolation.
@@ -70,8 +70,8 @@ class TestRbacForbidden:
     """Auth-protected ISVC rejects tokens that lack model access with HTTP 403.
 
     Preconditions:
-        - InferenceService deployed with Authorino auth enabled
-        - A ServiceAccount in a different namespace with no RBAC for the model namespace
+        - InferenceService deployed with enable_auth=True (kube-rbac-proxy)
+        - A ServiceAccount in a different namespace with no RBAC for the model
 
     Expected Results:
         - HTTP 403 Forbidden for cross-namespace or unauthorized tokens

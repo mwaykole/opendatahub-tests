@@ -1,15 +1,15 @@
 """
 Tests for authentication failure handling on auth-protected KServe inference endpoints.
 
-When KServe auth (Authorino) is enabled on an InferenceService, requests without
-a valid bearer token must be rejected with HTTP 401 Unauthorized. This is the most
-common customer misconfiguration when first enabling auth on model serving.
+When KServe raw deployment auth is enabled (kube-rbac-proxy sidecar), requests
+without a valid bearer token must be rejected with HTTP 401 Unauthorized. This is
+the most common customer misconfiguration when first enabling auth on model serving.
 
 Test scenarios:
     - No Authorization header at all
-    - Malformed token (random string, not a valid JWT)
-    - Expired / revoked token
-    - Token with wrong audience claim
+    - Malformed token (random string, not a valid SA token)
+    - Invalid JWT structure
+    - Wrong auth scheme
 
 Security validation:
     - Error responses must NOT leak internal paths, token values, or pod names
@@ -83,7 +83,7 @@ class TestAuthUnauthorized:
     """Auth-protected ISVC rejects requests without valid authentication with HTTP 401.
 
     Preconditions:
-        - InferenceService deployed with Authorino auth enabled
+        - InferenceService deployed with enable_auth=True (kube-rbac-proxy)
         - ISVC is Ready and serving
 
     Expected Results:
