@@ -13,7 +13,6 @@ from pyhelper_utils.shell import run_command
 from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
 from tests.model_serving.model_server.kserve.negative.constants import KSERVE_CONTROL_PLANE_DEPLOYMENTS
-from utilities.constants import Timeout
 from utilities.infra import get_pods_by_isvc_label
 from utilities.manifests.onnx import ONNX_INFERENCE_CONFIG
 
