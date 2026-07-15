@@ -43,13 +43,11 @@ _SPECIAL_MODEL_NAMES: list[tuple[str, str]] = [
 
 # Acceptable response codes for all invalid model names
 _EXPECTED_REJECTION_CODES: set[int] = {
-    HTTPStatus.NOT_FOUND,  # 404 — model not found (most common)
-    HTTPStatus.BAD_REQUEST,  # 400 — request rejected before routing
-    HTTPStatus.FORBIDDEN,  # 403 — path traversal blocked at gateway
-    HTTPStatus.UNPROCESSABLE_ENTITY,  # 422 — invalid model name format
-    HTTPStatus.METHOD_NOT_ALLOWED,  # 405 — method not allowed on the path
-    HTTPStatus.INTERNAL_SERVER_ERROR,  # 500 — should NOT happen but captured for visibility
-    HTTPStatus.NOT_IMPLEMENTED,  # 501 — not implemented
+    HTTPStatus.NOT_FOUND,  # 404 - model not found (most common)
+    HTTPStatus.BAD_REQUEST,  # 400 - request rejected before routing
+    HTTPStatus.FORBIDDEN,  # 403 - path traversal blocked at gateway
+    HTTPStatus.UNPROCESSABLE_ENTITY,  # 422 - invalid model name format
+    HTTPStatus.METHOD_NOT_ALLOWED,  # 405 - method not allowed on the path
 }
 
 

@@ -27,8 +27,10 @@ from pytest_testconfig import config as py_config
 
 from tests.model_serving.model_server.kserve.negative.constants import CONCURRENT_INVALID_REQUEST_COUNT
 from tests.model_serving.model_server.kserve.negative.utils import (
+    VALID_OVMS_INFERENCE_BODY,
     assert_kserve_control_plane_stable,
     assert_pods_healthy,
+    send_inference_request,
     send_inference_requests_concurrently,
     snapshot_kserve_control_plane_restart_totals,
 )
@@ -161,12 +163,6 @@ class TestConcurrentInvalidRequests:
             inference_service=negative_test_ovms_isvc,
             body=CONCURRENT_MALFORMED_BODY,
             count=CONCURRENT_INVALID_REQUEST_COUNT,
-        )
-
-        # Then send a valid request via the standard send_inference_request helper
-        from tests.model_serving.model_server.kserve.negative.utils import (
-            VALID_OVMS_INFERENCE_BODY,
-            send_inference_request,
         )
 
         valid_body = json.dumps(VALID_OVMS_INFERENCE_BODY)

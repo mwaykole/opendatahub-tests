@@ -1,7 +1,7 @@
 """
 Tests for oversized payload handling in KServe inference requests.
 
-Sending a request body that far exceeds typical server buffer limits (4–8 MB)
+Sending a request body that far exceeds typical server buffer limits (4-8 MB)
 exercises the boundary between "large but valid" and "reject as too large".
 KServe / envoy should return a 4xx (commonly 413 Request Entity Too Large)
 and must not crash or restart the predictor pod.
@@ -13,32 +13,62 @@ Boundary condition:
     because the body is not valid JSON, which is also acceptable.
 """
 
+import shlex
+import tempfile
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any
 
 import pytest
 from kubernetes.dynamic import DynamicClient
 from ocp_resources.inference_service import InferenceService
+from pyhelper_utils.shell import run_command
 
-from tests.model_serving.model_server.kserve.negative.constants import OVERSIZED_PAYLOAD_BODY
+from tests.model_serving.model_server.kserve.negative.constants import OVERSIZED_PAYLOAD_SIZE_BYTES
 from tests.model_serving.model_server.kserve.negative.utils import (
     assert_pods_healthy,
-    send_inference_request,
 )
 
 pytestmark = pytest.mark.usefixtures("valid_aws_config")
 
-# Acceptable status codes when an oversized body is sent:
-#   413 – canonical "payload too large"
-#   400 – body is not valid JSON so the server rejects it before size check
-#   408 – request timeout on very large uploads to some proxies
-#   503 – upstream refuses the connection when body is too large
 OVERSIZED_PAYLOAD_EXPECTED_CODES: set[int] = {
-    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,  # 413
-    HTTPStatus.BAD_REQUEST,  # 400
-    HTTPStatus.REQUEST_TIMEOUT,  # 408
-    HTTPStatus.SERVICE_UNAVAILABLE,  # 503
+    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+    HTTPStatus.BAD_REQUEST,
+    HTTPStatus.REQUEST_TIMEOUT,
+    HTTPStatus.SERVICE_UNAVAILABLE,
 }
+
+
+def _send_oversized_request(inference_service: InferenceService) -> tuple[int, str]:
+    """Send a 6 MB payload via curl stdin to avoid E2BIG on argv."""
+    base_url = inference_service.instance.status.url
+    if not base_url:
+        raise ValueError(f"InferenceService '{inference_service.name}' has no URL; is it Ready?")
+
+    endpoint = f"{base_url}/v2/models/{inference_service.name}/infer"
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".bin", delete=False) as tmp:
+        tmp.write("A" * OVERSIZED_PAYLOAD_SIZE_BYTES)
+        tmp_path = tmp.name
+
+    try:
+        cmd = (
+            f"curl -s -w '\\n%{{http_code}}' "
+            f"-X POST {endpoint} "
+            f"-H 'Content-Type: application/json' "
+            f"--data-binary @{tmp_path} "
+            f"--insecure"
+        )
+        _, out, _ = run_command(command=shlex.split(cmd), verify_stderr=False, check=False)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    lines = out.strip().split("\n")
+    try:
+        status_code = int(lines[-1])
+    except ValueError as exc:
+        raise ValueError(f"Could not parse HTTP status code from curl output: {out!r}") from exc
+    return status_code, "\n".join(lines[:-1])
 
 
 @pytest.mark.tier3
@@ -48,12 +78,10 @@ class TestOversizedPayload:
 
     Preconditions:
         - OVMS RawDeployment InferenceService is deployed and Ready
-        - ``OVERSIZED_PAYLOAD_BODY`` constant is a 6 MB string of repeated 'A'
 
     Expected Results:
         - HTTP Status Code: 413 or other 4xx / 503 indicating rejection
         - Predictor pod remains running with no new restarts
-        - No control-plane impact (tested via pod health assertion)
     """
 
     def test_oversized_payload_returns_error(
@@ -66,13 +94,10 @@ class TestOversizedPayload:
         When sending a POST request with a 6 MB body that exceeds server limits
         Then the response must be a 4xx/503 error code indicating rejection
         """
-        status_code, response_body = send_inference_request(
-            inference_service=negative_test_ovms_isvc,
-            body=OVERSIZED_PAYLOAD_BODY,
-        )
+        status_code, response_body = _send_oversized_request(negative_test_ovms_isvc)
 
         assert status_code in OVERSIZED_PAYLOAD_EXPECTED_CODES, (
-            f"Expected 413/400/408/503 for oversized payload ({len(OVERSIZED_PAYLOAD_BODY)} bytes), "
+            f"Expected 413/400/408/503 for oversized payload ({OVERSIZED_PAYLOAD_SIZE_BYTES} bytes), "
             f"got {status_code}. Response (first 200 chars): {response_body[:200]}"
         )
 
@@ -88,10 +113,7 @@ class TestOversizedPayload:
         When sending a 6 MB request body that should be rejected
         Then the same pods (by UID) should still be running without additional restarts
         """
-        send_inference_request(
-            inference_service=negative_test_ovms_isvc,
-            body=OVERSIZED_PAYLOAD_BODY,
-        )
+        _send_oversized_request(negative_test_ovms_isvc)
         assert_pods_healthy(
             admin_client=admin_client,
             isvc=negative_test_ovms_isvc,

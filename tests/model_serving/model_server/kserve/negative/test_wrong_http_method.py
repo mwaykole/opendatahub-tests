@@ -33,9 +33,9 @@ VALID_BODY_RAW: str = json.dumps(VALID_OVMS_INFERENCE_BODY)
 # OVMS / Istio / envoy may return 404 or 405 for wrong methods depending on the
 # proxy configuration – both are acceptable error responses.
 WRONG_METHOD_EXPECTED_CODES: set[int] = {
-    HTTPStatus.METHOD_NOT_ALLOWED,  # 405 – canonical "wrong method"
-    HTTPStatus.NOT_FOUND,  # 404 – some proxies return this when route is method-scoped
-    HTTPStatus.BAD_REQUEST,  # 400 – permissive proxies that inspect body first
+    HTTPStatus.METHOD_NOT_ALLOWED,  # 405 - canonical "wrong method"
+    HTTPStatus.NOT_FOUND,  # 404 - some proxies return this when route is method-scoped
+    HTTPStatus.BAD_REQUEST,  # 400 - permissive proxies that inspect body first
 }
 
 
