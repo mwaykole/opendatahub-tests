@@ -124,11 +124,14 @@ class TestInferenceTimeout:
         When sending multiple requests that timeout on the client side
         Then the pods must not restart or crash
         """
-        for _ in range(3):
-            _send_request_with_timeout(
+        for i in range(3):
+            status_code, _ = _send_request_with_timeout(
                 inference_service=negative_test_ovms_isvc,
                 timeout_seconds=0.001,
                 body=_VALID_BODY,
+            )
+            assert status_code in TIMEOUT_EXPECTED_CODES, (
+                f"Request {i+1} expected timeout (0/408/504/503), got {status_code}"
             )
 
         assert_pods_healthy(
@@ -147,11 +150,14 @@ class TestInferenceTimeout:
         When sending a subsequent request with no timeout constraint
         Then the response must be HTTP 200 with valid outputs
         """
-        for _ in range(3):
-            _send_request_with_timeout(
+        for i in range(3):
+            status_code, _ = _send_request_with_timeout(
                 inference_service=negative_test_ovms_isvc,
                 timeout_seconds=0.001,
                 body=_VALID_BODY,
+            )
+            assert status_code in TIMEOUT_EXPECTED_CODES, (
+                f"Setup request {i+1} expected timeout, got {status_code}"
             )
 
         from tests.model_serving.model_server.kserve.negative.utils import send_inference_request
