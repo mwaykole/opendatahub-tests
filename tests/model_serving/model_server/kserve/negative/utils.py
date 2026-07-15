@@ -291,10 +291,17 @@ def send_inference_request(
     endpoint = f"{base_url}/v2/models/{encoded_model}/infer"
 
     cmd_args = [
-        "curl", "-s", "-w", "\n%{http_code}",
-        "-X", "POST", endpoint,
-        "-H", f"Content-Type: {content_type}",
-        "--data-raw", body,
+        "curl",
+        "-s",
+        "-w",
+        "\n%{http_code}",
+        "-X",
+        "POST",
+        endpoint,
+        "-H",
+        f"Content-Type: {content_type}",
+        "--data-raw",
+        body,
         "--insecure",
     ]
     LOGGER.info(f"Running {' '.join(shlex.quote(a) for a in cmd_args)} command")
@@ -344,10 +351,17 @@ def send_inference_request_with_method(
     endpoint = f"{base_url}/v2/models/{encoded_model}/infer"
 
     cmd_args = [
-        "curl", "-s", "-w", "\n%{http_code}",
-        "-X", http_method, endpoint,
-        "-H", f"Content-Type: {content_type}",
-        "--data-raw", body,
+        "curl",
+        "-s",
+        "-w",
+        "\n%{http_code}",
+        "-X",
+        http_method,
+        endpoint,
+        "-H",
+        f"Content-Type: {content_type}",
+        "--data-raw",
+        body,
         "--insecure",
     ]
     LOGGER.info(f"Running {' '.join(shlex.quote(a) for a in cmd_args)} command")
