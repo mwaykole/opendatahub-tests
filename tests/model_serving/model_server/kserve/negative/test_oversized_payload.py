@@ -34,6 +34,7 @@ pytestmark = pytest.mark.usefixtures("valid_aws_config")
 OVERSIZED_PAYLOAD_EXPECTED_CODES: set[int] = {
     HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
     HTTPStatus.BAD_REQUEST,
+    HTTPStatus.PRECONDITION_FAILED,
     HTTPStatus.REQUEST_TIMEOUT,
     HTTPStatus.SERVICE_UNAVAILABLE,
 }
