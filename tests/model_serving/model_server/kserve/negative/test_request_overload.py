@@ -79,14 +79,11 @@ class TestRequestOverload:
             count=OVERLOAD_REQUEST_COUNT,
         )
 
-        assert len(results) == OVERLOAD_REQUEST_COUNT, (
-            f"Expected {OVERLOAD_REQUEST_COUNT} results, got {len(results)}"
-        )
+        assert len(results) == OVERLOAD_REQUEST_COUNT, f"Expected {OVERLOAD_REQUEST_COUNT} results, got {len(results)}"
 
         for idx, (status_code, response_body) in enumerate(results):
             assert status_code in OVERLOAD_ACCEPTABLE_CODES, (
-                f"Request #{idx + 1}: got unexpected {status_code} during overload. "
-                f"Response: {response_body[:200]}"
+                f"Request #{idx + 1}: got unexpected {status_code} during overload. Response: {response_body[:200]}"
             )
             assert status_code != HTTPStatus.INTERNAL_SERVER_ERROR, (
                 f"Request #{idx + 1}: server returned 500 during overload - indicates crash. "
@@ -173,6 +170,4 @@ class TestRequestOverload:
             f"Post-overload recovery request returned {status_code}. Response: {response_body[:200]}"
         )
         parsed = json.loads(response_body)
-        assert parsed.get("outputs"), (
-            f"Post-overload recovery returned empty outputs. Response: {response_body[:200]}"
-        )
+        assert parsed.get("outputs"), f"Post-overload recovery returned empty outputs. Response: {response_body[:200]}"

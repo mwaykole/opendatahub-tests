@@ -108,8 +108,7 @@ class TestInferenceTimeout:
         )
 
         assert status_code in TIMEOUT_EXPECTED_CODES, (
-            f"Expected timeout error (0/408/504/503), got {status_code}. "
-            f"Response: {response_body[:200]}"
+            f"Expected timeout error (0/408/504/503), got {status_code}. Response: {response_body[:200]}"
         )
 
     def test_pod_remains_healthy_after_timeout(
@@ -131,7 +130,7 @@ class TestInferenceTimeout:
                 body=_VALID_BODY,
             )
             assert status_code in TIMEOUT_EXPECTED_CODES, (
-                f"Request {i+1} expected timeout (0/408/504/503), got {status_code}"
+                f"Request {i + 1} expected timeout (0/408/504/503), got {status_code}"
             )
 
         assert_pods_healthy(
@@ -156,9 +155,7 @@ class TestInferenceTimeout:
                 timeout_seconds=0.001,
                 body=_VALID_BODY,
             )
-            assert status_code in TIMEOUT_EXPECTED_CODES, (
-                f"Setup request {i+1} expected timeout, got {status_code}"
-            )
+            assert status_code in TIMEOUT_EXPECTED_CODES, f"Setup request {i + 1} expected timeout, got {status_code}"
 
         from tests.model_serving.model_server.kserve.negative.utils import send_inference_request
 
