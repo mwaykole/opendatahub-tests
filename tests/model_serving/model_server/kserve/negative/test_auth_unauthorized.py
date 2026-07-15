@@ -114,8 +114,8 @@ class TestAuthUnauthorized:
             body=_VALID_BODY,
         )
 
-        assert status_code in {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}, (
-            f"[{case_id}] Expected 401/403 for invalid auth, got {status_code}. "
+        assert status_code == HTTPStatus.UNAUTHORIZED, (
+            f"[{case_id}] Expected 401 for invalid auth, got {status_code}. "
             f"Response: {response_body[:200]}"
         )
 
@@ -159,11 +159,14 @@ class TestAuthUnauthorized:
         When sending multiple requests with invalid auth
         Then the pods must not restart or crash
         """
-        for auth_header, _ in _INVALID_TOKENS:
-            _send_request_with_auth(
+        for auth_header, case_id in _INVALID_TOKENS:
+            status_code, _ = _send_request_with_auth(
                 inference_service=negative_test_ovms_isvc_with_auth,
                 auth_header=auth_header,
                 body=_VALID_BODY,
+            )
+            assert status_code == HTTPStatus.UNAUTHORIZED, (
+                f"[{case_id}] Expected 401 before pod health check, got {status_code}"
             )
 
         assert_pods_healthy(

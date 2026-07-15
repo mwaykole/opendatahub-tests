@@ -135,11 +135,14 @@ class TestRbacForbidden:
         When sending multiple requests with unauthorized tokens
         Then the pods must not restart or crash
         """
-        for _ in range(3):
-            _send_request_with_token(
+        for i in range(3):
+            status_code, _ = _send_request_with_token(
                 inference_service=negative_test_ovms_isvc_with_auth,
                 token=cross_namespace_sa_token,
                 body=_VALID_BODY,
+            )
+            assert status_code == HTTPStatus.FORBIDDEN, (
+                f"Request {i+1} expected 403 before pod health check, got {status_code}"
             )
 
         assert_pods_healthy(
