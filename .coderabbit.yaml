@@ -15,6 +15,37 @@ reviews:
         - Ensure we use https://github.com/RedHatQE/openshift-python-wrapper/ instead of direct oc calls when possible
         - Code reuse, test parameterization, proper test dependency should be also encouraged
         - Check CONSTITUTION and AGENTS files
+
+    - path: "tests/model_serving/model_server/**/test_*.py"
+      instructions: |
+        Follow the tier classification guidelines in tests/model_serving/model_server/AGENTS.md.
+        Every test function or test class should have a tier marker (smoke, tier1, tier2, tier3).
+        If a tier marker is missing, suggest an appropriate one based on what the test does:
+        - smoke: basic "does it work" flows (auth, deploy+query)
+        - tier1: core product functionality (lifecycle, ingress, observability)
+        - tier2: secondary features or optional-infra-dependent (autoscaling, model cache, multi-node)
+        - tier3: negative/error/destructive tests
+        - upgrade tests should also have pre_upgrade or post_upgrade
+        Also verify:
+        - Every test has a docstring.
+        - Fixtures use noun names (not create_*, setup_*, get_*).
+        - No time.sleep() — must use TimeoutSampler or wait_for_condition.
+        - No bare except Exception.
+        - Type annotations present on new code.
+
+    - path: "tests/model_serving/model_server/**/conftest.py"
+      instructions: |
+        Conftest files MUST contain only fixtures — no utility functions, constants, or helper classes.
+        Fixture names MUST be nouns (storage_secret, not create_secret).
+        Resource-creating fixtures MUST use context managers (with Resource() as r: yield r).
+        Use the narrowest fixture scope: function > class > module > session.
+
+    - path: "tests/model_serving/model_server/upgrade/**"
+      instructions: |
+        Upgrade tests MUST have both a tier marker (tier1) AND pre_upgrade or post_upgrade.
+        Pre-upgrade tests capture baseline to ConfigMap via capture_upgrade_baseline fixture.
+        Post-upgrade tests compare against baseline. Bearer tokens go in Secrets, not ConfigMaps.
+
   review_status: false
   changed_files_summary: true
   suggested_labels: true
@@ -38,6 +69,30 @@ reviews:
       - "do not review"
       - "lock file maintenance"
       - "pre-commit autoupdate"
+
+  pre_merge_checks:
+    custom_checks:
+      - name: "Model Server Tier Marker"
+        mode: warning
+        instructions: |
+          For files matching tests/model_serving/model_server/**/test_*.py, check
+          that every new test function or test class has at least one tier marker
+          (smoke, sanity, tier1, tier2, or tier3) as a decorator. The marker can be
+          on the function, the enclosing class, or via pytestmark at module level.
+
+          If a tier marker is missing, FAIL and suggest the correct tier based on
+          the subdirectory:
+          - kserve/authentication/ → @pytest.mark.smoke
+          - kserve/negative/ → @pytest.mark.tier3
+          - kserve/inference_graph/, inference_service_lifecycle/, ingress/,
+            observability/, platform/ → @pytest.mark.tier1
+          - kserve/autoscaling/, canary_rollout/, model_cache/, multi_node/,
+            storage/ → @pytest.mark.tier2
+          - llmd/ → @pytest.mark.tier1 (smoke for test_llmd_smoke.py)
+          - upgrade/ → @pytest.mark.tier1 (must also have pre_upgrade/post_upgrade)
+
+          PASS if no test files under model_server are changed, or all tests have
+          a tier marker. PASS for files outside tests/model_serving/model_server/.
 
   tools:
     languagetool:
@@ -76,6 +131,14 @@ reviews:
       enabled: true
     dotenvLint:
       enabled: true
+
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/CONSTITUTION.md"
+      - "**/AGENTS.md"
+      - "docs/STYLE_GUIDE.md"
+      - "docs/DEVELOPER_GUIDE.md"
 
 chat:
   auto_reply: true
