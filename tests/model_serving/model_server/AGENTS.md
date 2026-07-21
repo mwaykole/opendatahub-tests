@@ -135,11 +135,11 @@ class TestDescriptiveClassName:
 
 ### Upgrade Tests
 
-Upgrade tests use `--pre-upgrade` and `--post-upgrade` flags, not marker substitution:
+Upgrade tests require both `@pytest.mark.pre_upgrade` or `@pytest.mark.post_upgrade` markers AND a tier marker. CI runs use `--pre-upgrade` / `--post-upgrade` CLI flags to select the phase.
 
-1. **Pre-upgrade**: deploy resources, send inference, capture baseline to ConfigMap (`capture_upgrade_baseline` fixture).
+1. **Pre-upgrade** (`@pytest.mark.pre_upgrade`): deploy resources, send inference, capture baseline to ConfigMap (`capture_upgrade_baseline` fixture).
 2. **Operator upgrade happens externally** (Jenkins/CI).
-3. **Post-upgrade**: verify resources survived, compare against baseline, re-inference.
+3. **Post-upgrade** (`@pytest.mark.post_upgrade`): verify resources survived, compare against baseline, re-inference.
 
 Baseline data goes in ConfigMaps. Bearer tokens go in Secrets (not ConfigMap data).
 
@@ -147,12 +147,12 @@ Baseline data goes in ConfigMaps. Bearer tokens go in Secrets (not ConfigMap dat
 
 When reviewing PRs that touch this directory:
 
-- [ ] Every new test has exactly one tier marker (smoke/tier1/tier2/tier3)
+- [ ] Every test has exactly one tier marker (smoke/tier1/tier2/tier3)
 - [ ] Tier marker matches the subdirectory default from the classification table
 - [ ] Every test has a docstring
 - [ ] Fixtures use noun names and context managers
 - [ ] No `time.sleep()` — uses `TimeoutSampler` or `.wait_for_condition()`
-- [ ] No bare `except Exception:` — catches specific errors
+- [ ] No broad `except Exception:` — catches specific exceptions (CWE-396)
 - [ ] Images use `@sha256:` digest pinning in `image_constants.py`
 - [ ] Type annotations on all new code
 - [ ] `openshift-python-wrapper` used for K8s API calls

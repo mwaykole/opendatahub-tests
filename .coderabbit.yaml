@@ -30,7 +30,7 @@ reviews:
         - Every test has a docstring.
         - Fixtures use noun names (not create_*, setup_*, get_*).
         - No time.sleep() — must use TimeoutSampler or wait_for_condition.
-        - No bare except Exception.
+        - No broad `except Exception:` — catch specific exceptions (CWE-396).
         - Type annotations present on new code.
 
     - path: "tests/model_serving/model_server/**/conftest.py"
@@ -76,9 +76,9 @@ reviews:
         mode: warning
         instructions: |
           For files matching tests/model_serving/model_server/**/test_*.py, check
-          that every new test function or test class has at least one tier marker
-          (smoke, sanity, tier1, tier2, or tier3) as a decorator. The marker can be
-          on the function, the enclosing class, or via pytestmark at module level.
+          that every test function and test class in each changed file has exactly
+          one tier marker (smoke, tier1, tier2, or tier3) as a decorator. The marker
+          can be on the function, the enclosing class, or via pytestmark at module level.
 
           If a tier marker is missing, FAIL and suggest the correct tier based on
           the subdirectory:
