@@ -10,6 +10,7 @@ This directory contains integration tests for the **Serving Orchestration** (KSe
 Every test function or test class should have a tier marker. Use the guide below to pick the right one. These are recommended defaults — use your judgment if a test doesn't fit neatly.
 
 **Exceptions** (do NOT need tier markers):
+
 - **GPU tests** — marked with `gpu` or `model_server_gpu`, run via the dedicated GPU Quality gate
 - **Upgrade tests** — use `pre_upgrade` / `post_upgrade` markers instead
 
