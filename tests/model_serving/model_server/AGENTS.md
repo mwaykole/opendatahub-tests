@@ -9,6 +9,10 @@ This directory contains integration tests for the **Serving Orchestration** (KSe
 
 Every test function or test class should have a tier marker. Use the guide below to pick the right one. These are recommended defaults — use your judgment if a test doesn't fit neatly.
 
+**Exceptions** (do NOT need tier markers):
+- **GPU tests** — marked with `gpu` or `model_server_gpu`, run via the dedicated GPU Quality gate
+- **Upgrade tests** — use `pre_upgrade` / `post_upgrade` markers instead
+
 ### Tier Definitions
 
 - **smoke** — "Does it work at all?" Core flows that gate the build. If a smoke test fails, nothing else matters. Keep this set small.
@@ -30,6 +34,7 @@ Every test function or test class should have a tier marker. Use the guide below
 | Canary rollout | `tier2` | Advanced deployment strategy |
 | Model cache | `tier2` | LocalModelNamespaceCache flows |
 | Multi-node / workerSpec | `tier2` | Requires special hardware |
+| GPU (vLLM, NIM) | n/a | GPU tests use `gpu`/`model_server_gpu` marker; run via GPU Quality gate, not tier gating |
 | Negative / error handling | `tier3` | Invalid input, auth rejection, overload |
 | LLMD | `tier1` | LLM Deployment; smoke test → `smoke` |
 | Upgrade | n/a | Uses `pre_upgrade` / `post_upgrade` markers instead of tier markers |
@@ -47,10 +52,10 @@ Every test must have the following markers where applicable:
 
 | Marker | When Required |
 | --- | --- |
-| `smoke` / `tier1` / `tier2` / `tier3` | **Always** — exactly one per test |
-| `pre_upgrade` / `post_upgrade` | Tests under `upgrade/` |
+| `smoke` / `tier1` / `tier2` / `tier3` | **Always** — exactly one per test (except GPU and upgrade tests) |
+| `pre_upgrade` / `post_upgrade` | Tests under `upgrade/` (replaces tier marker) |
 | `rawdeployment` | Tests targeting KServe RawDeployment (Standard) mode |
-| `gpu` / `model_server_gpu` | Tests requiring GPU nodes |
+| `gpu` / `model_server_gpu` | Tests requiring GPU nodes (replaces tier marker; runs via GPU Quality gate) |
 | `multinode` | Tests requiring multiple nodes (workerSpec) |
 | `slow` | Tests expected to take >10 minutes (used in model_cache, platform tests) |
 | `llmd_cpu` / `llmd_gpu` | LLMD tests by resource requirement |
@@ -147,8 +152,9 @@ Baseline data goes in ConfigMaps. Bearer tokens go in Secrets (not ConfigMap dat
 
 When reviewing PRs that touch this directory:
 
-- [ ] Every test has exactly one tier marker (smoke/tier1/tier2/tier3)
+- [ ] Every non-GPU test has exactly one tier marker (smoke/tier1/tier2/tier3)
 - [ ] Tier marker matches the subdirectory default from the classification table
+- [ ] GPU tests use `gpu`/`model_server_gpu` marker (no tier marker needed)
 - [ ] Every test has a docstring
 - [ ] Fixtures use noun names and context managers
 - [ ] No `time.sleep()` — uses `TimeoutSampler` or `.wait_for_condition()`

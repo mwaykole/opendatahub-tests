@@ -20,12 +20,14 @@ reviews:
       instructions: |
         Follow the tier classification guidelines in tests/model_serving/model_server/AGENTS.md.
         Every test function or test class should have a tier marker (smoke, tier1, tier2, tier3).
-        If a tier marker is missing, suggest an appropriate one based on what the test does:
+        Exceptions — these do NOT need tier markers:
+        - GPU tests (marked with gpu or model_server_gpu) — run via the GPU Quality gate
+        - Upgrade tests (marked with pre_upgrade or post_upgrade)
+        If a tier marker is missing and no exception applies, suggest one based on what the test does:
         - smoke: basic "does it work" flows (auth, deploy+query)
         - tier1: core product functionality (lifecycle, ingress, observability)
         - tier2: secondary features or optional-infra-dependent (autoscaling, model cache, multi-node)
         - tier3: negative/error/destructive tests
-        - upgrade tests should also have pre_upgrade or post_upgrade
         Also verify:
         - Every test has a docstring.
         - Fixtures use noun names (not create_*, setup_*, get_*).
@@ -80,8 +82,13 @@ reviews:
           one tier marker (smoke, tier1, tier2, or tier3) as a decorator. The marker
           can be on the function, the enclosing class, or via pytestmark at module level.
 
-          If a tier marker is missing, FAIL and suggest the correct tier based on
-          the subdirectory:
+          Exceptions — these tests do NOT need a tier marker:
+          - GPU tests: any test marked with @pytest.mark.gpu or @pytest.mark.model_server_gpu
+            (GPU tests run via the dedicated GPU Quality gate, not tier-based gating)
+          - Upgrade tests: any test marked with @pytest.mark.pre_upgrade or @pytest.mark.post_upgrade
+
+          If a tier marker is missing and no exception applies, FAIL and suggest the
+          correct tier based on the subdirectory:
           - kserve/authentication/ → @pytest.mark.smoke
           - kserve/negative/ → @pytest.mark.tier3
           - kserve/inference_graph/, inference_service_lifecycle/, ingress/,
@@ -91,8 +98,8 @@ reviews:
           - llmd/ → @pytest.mark.tier1 (smoke for test_llmd_smoke.py)
           - upgrade/ → uses pre_upgrade/post_upgrade markers (no tier marker required)
 
-          PASS if no test files under model_server are changed, or all tests have
-          a tier marker. PASS for files outside tests/model_serving/model_server/.
+          PASS if no test files under model_server are changed, or all non-exempt
+          tests have a tier marker. PASS for files outside tests/model_serving/model_server/.
 
   tools:
     languagetool:
