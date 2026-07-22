@@ -32,14 +32,14 @@ Every test function or test class should have a tier marker. Use the guide below
 | Multi-node / workerSpec | `tier2` | Requires special hardware |
 | Negative / error handling | `tier3` | Invalid input, auth rejection, overload |
 | LLMD | `tier1` | LLM Deployment; smoke test → `smoke` |
-| Upgrade | `tier1` | Must also have `pre_upgrade` or `post_upgrade` |
+| Upgrade | n/a | Uses `pre_upgrade` / `post_upgrade` markers instead of tier markers |
 
 ### Marker Placement
 
 - Apply tier markers at the **class level** when all tests in the class share the same tier.
 - Apply tier markers at the **function level** when tests within a class have different tiers (rare — prefer splitting into separate classes).
 - Use `pytestmark = [pytest.mark.smoke]` at the **module level** only when the entire file is a single tier.
-- Upgrade tests MUST have both a tier marker AND `pre_upgrade` or `post_upgrade`.
+- Upgrade tests use `pre_upgrade` or `post_upgrade` markers instead of tier markers.
 
 ## Required Markers
 
@@ -52,7 +52,7 @@ Every test must have the following markers where applicable:
 | `rawdeployment` | Tests targeting KServe RawDeployment (Standard) mode |
 | `gpu` / `model_server_gpu` | Tests requiring GPU nodes |
 | `multinode` | Tests requiring multiple nodes (workerSpec) |
-| `slow` | Tests expected to take >10 minutes |
+| `slow` | Tests expected to take >10 minutes (used in model_cache, platform tests) |
 | `llmd_cpu` / `llmd_gpu` | LLMD tests by resource requirement |
 | `kueue` / `keda` | Tests depending on Kueue/KEDA operators |
 | `minio` | Tests using MinIO storage |
@@ -135,7 +135,7 @@ class TestDescriptiveClassName:
 
 ### Upgrade Tests
 
-Upgrade tests require both `@pytest.mark.pre_upgrade` or `@pytest.mark.post_upgrade` markers AND a tier marker. CI runs use `--pre-upgrade` / `--post-upgrade` CLI flags to select the phase.
+Upgrade tests use `@pytest.mark.pre_upgrade` and `@pytest.mark.post_upgrade` markers to indicate the test phase. CI runs use `--pre-upgrade` / `--post-upgrade` CLI flags to select which phase to execute. Upgrade tests do not require a separate tier marker.
 
 1. **Pre-upgrade** (`@pytest.mark.pre_upgrade`): deploy resources, send inference, capture baseline to ConfigMap (`capture_upgrade_baseline` fixture).
 2. **Operator upgrade happens externally** (Jenkins/CI).
@@ -156,4 +156,4 @@ When reviewing PRs that touch this directory:
 - [ ] Images use `@sha256:` digest pinning in `image_constants.py`
 - [ ] Type annotations on all new code
 - [ ] `openshift-python-wrapper` used for K8s API calls
-- [ ] Upgrade tests have both tier marker AND `pre_upgrade`/`post_upgrade`
+- [ ] Upgrade tests have `pre_upgrade` or `post_upgrade` marker

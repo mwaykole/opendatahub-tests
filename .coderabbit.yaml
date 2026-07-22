@@ -42,7 +42,7 @@ reviews:
 
     - path: "tests/model_serving/model_server/upgrade/**"
       instructions: |
-        Upgrade tests MUST have both a tier marker (tier1) AND pre_upgrade or post_upgrade.
+        Upgrade tests use pre_upgrade or post_upgrade markers instead of tier markers.
         Pre-upgrade tests capture baseline to ConfigMap via capture_upgrade_baseline fixture.
         Post-upgrade tests compare against baseline. Bearer tokens go in Secrets, not ConfigMaps.
 
@@ -89,7 +89,7 @@ reviews:
           - kserve/autoscaling/, canary_rollout/, model_cache/, multi_node/,
             storage/ → @pytest.mark.tier2
           - llmd/ → @pytest.mark.tier1 (smoke for test_llmd_smoke.py)
-          - upgrade/ → @pytest.mark.tier1 (must also have pre_upgrade/post_upgrade)
+          - upgrade/ → uses pre_upgrade/post_upgrade markers (no tier marker required)
 
           PASS if no test files under model_server are changed, or all tests have
           a tier marker. PASS for files outside tests/model_serving/model_server/.
