@@ -153,7 +153,7 @@ Baseline data goes in ConfigMaps. Bearer tokens go in Secrets (not ConfigMap dat
 
 When reviewing PRs that touch this directory:
 
-- [ ] Every non-GPU test has exactly one tier marker (smoke/tier1/tier2/tier3)
+- [ ] Every non-exempt test has exactly one tier marker (smoke/tier1/tier2/tier3)
 - [ ] Tier marker matches the subdirectory default from the classification table
 - [ ] GPU tests use `gpu`/`model_server_gpu` marker (no tier marker needed)
 - [ ] Every test has a docstring
